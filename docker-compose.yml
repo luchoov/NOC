@@ -66,6 +66,8 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE:-noc-clients}
       Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_EXPIRY_MINUTES:-15}
       Jwt__RefreshTokenDays: ${JWT_REFRESH_TOKEN_EXPIRY_DAYS:-7}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
       Encryption__MasterKey: ${ENCRYPTION_MASTER_KEY}
       MinIO__Endpoint: minio:9000
       MinIO__AccessKey: ${MINIO_ROOT_USER}
@@ -103,6 +105,8 @@ services:
       MinIO__UseSSL: "false"
       Workers__Messaging__ConsumerCount: ${MESSAGING_CONSUMER_COUNT:-4}
       Workers__Messaging__ReopenWindowHours: ${REOPEN_WINDOW_HOURS:-24}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,6 +126,8 @@ services:
       Workers__Campaigns__DefaultMsgsPerMinute: ${CAMPAIGNS_MSGS_PER_MINUTE:-10}
       Workers__Campaigns__BanThresholdRatio: ${CAMPAIGNS_BAN_THRESHOLD_RATIO:-0.4}
       Workers__Campaigns__BanMinAbsoluteFailures: ${CAMPAIGNS_BAN_MIN_FAILURES:-5}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy

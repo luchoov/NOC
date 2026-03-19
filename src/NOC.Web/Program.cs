@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using NOC.Shared.Infrastructure;
 using NOC.Shared.Infrastructure.Crypto;
 using NOC.Shared.Infrastructure.Data;
+using NOC.Shared.Infrastructure.Evolution;
 using NOC.Shared.Infrastructure.Outbox;
 using NOC.Web.Auth;
 using NOC.Web.Middleware;
@@ -38,6 +39,7 @@ try
     // Redis + Outbox
     var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
     builder.Services.AddOutbox(redisConnection);
+    builder.Services.AddEvolutionApiClient(builder.Configuration);
 
     // Encryption
     var masterKeyBase64 = builder.Configuration["Encryption:MasterKey"];
