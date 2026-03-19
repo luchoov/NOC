@@ -1,0 +1,170 @@
+services:
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8-alpine
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - redisdata:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  noc-web:
+    build:
+      context: .
+      dockerfile: src/NOC.Web/Dockerfile
+    ports:
+      - "${NOC_WEB_PORT:-8080}:8080"
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__MinIO: "http://minio:9000"
+      Jwt__Secret: ${JWT_SECRET}
+      Jwt__Issuer: ${JWT_ISSUER:-noc-api}
+      Jwt__Audience: ${JWT_AUDIENCE:-noc-clients}
+      Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_EXPIRY_MINUTES:-15}
+      Jwt__RefreshTokenDays: ${JWT_REFRESH_TOKEN_EXPIRY_DAYS:-7}
+      Encryption__MasterKey: ${ENCRYPTION_MASTER_KEY}
+      MinIO__Endpoint: minio:9000
+      MinIO__AccessKey: ${MINIO_ROOT_USER}
+      MinIO__SecretKey: ${MINIO_ROOT_PASSWORD}
+      MinIO__Bucket: ${MINIO_BUCKET:-noc-media}
+      MinIO__UseSSL: "false"
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  noc-worker-messaging:
+    build:
+      context: .
+      dockerfile: src/NOC.Worker.Messaging/Dockerfile
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__MinIO: "http://minio:9000"
+      Encryption__MasterKey: ${ENCRYPTION_MASTER_KEY}
+      MinIO__Endpoint: minio:9000
+      MinIO__AccessKey: ${MINIO_ROOT_USER}
+      MinIO__SecretKey: ${MINIO_ROOT_PASSWORD}
+      MinIO__Bucket: ${MINIO_BUCKET:-noc-media}
+      MinIO__UseSSL: "false"
+      Workers__Messaging__ConsumerCount: ${MESSAGING_CONSUMER_COUNT:-4}
+      Workers__Messaging__ReopenWindowHours: ${REOPEN_WINDOW_HOURS:-24}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  noc-worker-campaigns:
+    build:
+      context: .
+      dockerfile: src/NOC.Worker.Campaigns/Dockerfile
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      ConnectionStrings__Redis: "redis:6379"
+      Encryption__MasterKey: ${ENCRYPTION_MASTER_KEY}
+      Workers__Campaigns__BatchSize: ${CAMPAIGNS_BATCH_SIZE:-50}
+      Workers__Campaigns__LeaseMinutes: ${CAMPAIGNS_LEASE_MINUTES:-5}
+      Workers__Campaigns__DefaultMsgsPerMinute: ${CAMPAIGNS_MSGS_PER_MINUTE:-10}
+      Workers__Campaigns__BanThresholdRatio: ${CAMPAIGNS_BAN_THRESHOLD_RATIO:-0.4}
+      Workers__Campaigns__BanMinAbsoluteFailures: ${CAMPAIGNS_BAN_MIN_FAILURES:-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  noc-worker-notifications:
+    build:
+      context: .
+      dockerfile: src/NOC.Worker.Notifications/Dockerfile
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      ConnectionStrings__Redis: "redis:6379"
+      Alerts__SlackWebhookUrl: ${SLACK_WEBHOOK_URL:-}
+      Alerts__AdminEmail: ${ADMIN_EMAIL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  noc-worker-ai:
+    build:
+      context: .
+      dockerfile: src/NOC.Worker.AI/Dockerfile
+    environment:
+      ConnectionStrings__Redis: "redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  noc-frontend:
+    build:
+      context: ./src/noc-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://noc-web:8080}
+    depends_on:
+      noc-web:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
