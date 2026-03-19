@@ -33,7 +33,7 @@ try
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres"), npgsql =>
         {
             npgsql.MigrationsAssembly("NOC.Web");
-        }));
+        }).UseSnakeCaseNamingConvention());
 
     // Redis + Outbox
     var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";

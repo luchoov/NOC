@@ -1,0 +1,16 @@
+global.json
+.git
+.env
+.env.*
+**/.vs
+**/bin
+**/obj
+**/node_modules
+**/.next
+docs/
+config/
+*.md
+LICENSE
+.editorconfig
+.gitignore
+Makefile

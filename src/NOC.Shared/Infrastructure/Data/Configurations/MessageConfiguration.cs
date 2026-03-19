@@ -38,7 +38,7 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
         // Webhook deduplication
         builder.HasIndex(e => e.ExternalId)
             .IsUnique()
-            .HasFilter("external_id IS NOT NULL");
+            .HasFilter("\"external_id\" IS NOT NULL");
 
         // Outbound delivery tracking
         builder.HasIndex(e => new { e.DeliveryStatus, e.CreatedAt })

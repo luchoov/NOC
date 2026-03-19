@@ -3,10 +3,11 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using NOC.Shared.Infrastructure.Data;
 
-namespace NOC.Shared.Infrastructure.Data;
+namespace NOC.Web;
 
-public class NocDbContextFactory : IDesignTimeDbContextFactory<NocDbContext>
+public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<NocDbContext>
 {
     public NocDbContext CreateDbContext(string[] args)
     {

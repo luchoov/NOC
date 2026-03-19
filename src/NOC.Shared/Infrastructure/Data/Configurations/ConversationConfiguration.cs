@@ -50,7 +50,7 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
         // Agent-specific index
         builder.HasIndex(e => new { e.AssignedTo, e.Status, e.LastMessageAt })
             .IsDescending(false, false, true)
-            .HasFilter("assigned_to IS NOT NULL");
+            .HasFilter("\"assigned_to\" IS NOT NULL");
 
         // Contact lookup
         builder.HasIndex(e => new { e.ContactId, e.Status });

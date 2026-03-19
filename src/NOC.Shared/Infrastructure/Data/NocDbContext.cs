@@ -25,19 +25,41 @@ public class NocDbContext(DbContextOptions<NocDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // Register PostgreSQL enums
-        modelBuilder.HasPostgresEnum<ChannelType>();
-        modelBuilder.HasPostgresEnum<BanStatus>();
-        modelBuilder.HasPostgresEnum<ConversationStatus>();
-        modelBuilder.HasPostgresEnum<MessageDirection>();
-        modelBuilder.HasPostgresEnum<MessageType>();
-        modelBuilder.HasPostgresEnum<DeliveryStatus>();
-        modelBuilder.HasPostgresEnum<AgentRole>();
-        modelBuilder.HasPostgresEnum<ProxyProtocol>();
-        modelBuilder.HasPostgresEnum<ProxyStatus>();
-        modelBuilder.HasPostgresEnum<CampaignStatus>();
-
         // Apply all configurations from this assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(NocDbContext).Assembly);
+
+        // Store all enums as strings in the database
+        modelBuilder.Entity<Inbox>(e =>
+        {
+            e.Property(x => x.ChannelType).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.BanStatus).HasConversion<string>().HasMaxLength(20);
+        });
+        modelBuilder.Entity<Conversation>(e =>
+        {
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+        });
+        modelBuilder.Entity<Message>(e =>
+        {
+            e.Property(x => x.Direction).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Type).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.DeliveryStatus).HasConversion<string>().HasMaxLength(20);
+        });
+        modelBuilder.Entity<MessageStatusEvent>(e =>
+        {
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        modelBuilder.Entity<Agent>(e =>
+        {
+            e.Property(x => x.Role).HasConversion<string>().HasMaxLength(20);
+        });
+        modelBuilder.Entity<Campaign>(e =>
+        {
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        modelBuilder.Entity<ProxyOutbound>(e =>
+        {
+            e.Property(x => x.Protocol).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
     }
 }
