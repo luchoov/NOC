@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: oklch(0.145 0 0);
+  --color-foreground: oklch(0.94 0.006 264.531);
+  --color-card: oklch(0.17 0.006 264.531);
+  --color-card-foreground: oklch(0.94 0.006 264.531);
+  --color-popover: oklch(0.17 0.006 264.531);
+  --color-popover-foreground: oklch(0.94 0.006 264.531);
+  --color-primary: oklch(0.623 0.214 259.815);
+  --color-primary-foreground: oklch(0.98 0.005 264.531);
+  --color-secondary: oklch(0.24 0.01 264.531);
+  --color-secondary-foreground: oklch(0.94 0.006 264.531);
+  --color-muted: oklch(0.21 0.006 264.531);
+  --color-muted-foreground: oklch(0.55 0.014 264.531);
+  --color-accent: oklch(0.623 0.214 259.815);
+  --color-accent-foreground: oklch(0.98 0.005 264.531);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-destructive-foreground: oklch(0.98 0.005 264.531);
+  --color-border: oklch(0.24 0.01 264.531);
+  --color-input: oklch(0.24 0.01 264.531);
+  --color-ring: oklch(0.623 0.214 259.815);
+  --color-sidebar: oklch(0.15 0.006 264.531);
+  --color-sidebar-foreground: oklch(0.94 0.006 264.531);
+  --color-sidebar-border: oklch(0.21 0.006 264.531);
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.3 0.006 264.531);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.4 0.006 264.531);
+}

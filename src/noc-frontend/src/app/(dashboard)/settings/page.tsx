@@ -3,6 +3,6 @@
 
 import { redirect } from 'next/navigation';
 
-export default function Home() {
-  redirect('/inbox');
+export default function SettingsPage() {
+  redirect('/settings/inboxes');
 }

@@ -90,3 +90,8 @@ Desktop.ini
 # Security scanning
 # ============================================
 .secrets.baseline
+
+# ============================================
+# Claude Code
+# ============================================
+.claude/settings.local.json
