@@ -1,0 +1,8 @@
+// Copyright (c) Neuryn Software
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+import { redirect } from 'next/navigation';
+
+export default function Home() {
+  redirect('/inbox');
+}
