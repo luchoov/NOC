@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Inbox, Loader2, Filter, ChevronDown } from 'lucide-react';
-import { listConversations } from '@/lib/api/conversations';
+import { listConversations, getConversation, markConversationRead } from '@/lib/api/conversations';
 import { listInboxes } from '@/lib/api/inboxes';
 import { useUIStore } from '@/lib/store/ui.store';
 import { useAuthStore } from '@/lib/store/auth.store';
@@ -33,12 +33,25 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedIdRaw] = useState<string | null>(null);
   const [contactPanelOpen, setContactPanelOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [inboxDropdownOpen, setInboxDropdownOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const fetchRef = useRef(0);
+
+  // Select conversation + mark as read
+  const selectConversation = useCallback((id: string | null) => {
+    setSelectedIdRaw(id);
+    if (id) {
+      // Reset unread count locally immediately
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id && c.unreadCount > 0 ? { ...c, unreadCount: 0 } : c)),
+      );
+      // Tell backend
+      markConversationRead(id).catch(() => {});
+    }
+  }, []);
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedId) ?? null,
@@ -50,7 +63,11 @@ export default function InboxPage() {
     listInboxes({ isActive: true }).then(setInboxes).catch(() => {});
   }, []);
 
-  // Fetch conversations
+  // Use ref to avoid conversations in useCallback dependency
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+
+  // Fetch conversations — stable callback (no conversations dependency)
   const fetchConversations = useCallback(
     async (append = false) => {
       const token = ++fetchRef.current;
@@ -64,10 +81,13 @@ export default function InboxPage() {
         if (statusFilter) params.status = statusFilter;
         if (conversationFilter === 'mine' && agent?.id) params.assignedTo = agent.id;
 
-        if (append && conversations.length > 0) {
-          const last = conversations[conversations.length - 1];
-          if (last.lastMessageAt) params.beforeLastMessageAt = last.lastMessageAt;
-          params.beforeId = last.id;
+        if (append) {
+          const current = conversationsRef.current;
+          if (current.length > 0) {
+            const last = current[current.length - 1];
+            if (last.lastMessageAt) params.beforeLastMessageAt = last.lastMessageAt;
+            params.beforeId = last.id;
+          }
         }
 
         const data = await listConversations(params as never);
@@ -88,8 +108,22 @@ export default function InboxPage() {
         }
       }
     },
-    [selectedInboxId, statusFilter, conversationFilter, agent?.id, conversations],
+    [selectedInboxId, statusFilter, conversationFilter, agent?.id],
   );
+
+  // Fetch a single new conversation by ID and prepend it to the list
+  const fetchNewConversation = useCallback(async (conversationId: string) => {
+    try {
+      const conv = await getConversation(conversationId);
+      setConversations((prev) => {
+        // Avoid duplicates (race condition: might have arrived already)
+        if (prev.some((c) => c.id === conv.id)) return prev;
+        return [conv, ...prev];
+      });
+    } catch {
+      // silent — conversation might not match current filters
+    }
+  }, []);
 
   // Re-fetch on filter change
   useEffect(() => {
@@ -97,12 +131,22 @@ export default function InboxPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInboxId, statusFilter, conversationFilter]);
 
+  // Join all inbox groups (or just the selected one) so we always get real-time events
+  const inboxIdsToJoin = useMemo(
+    () => selectedInboxId ? [selectedInboxId] : inboxes.map((i) => i.id),
+    [selectedInboxId, inboxes],
+  );
+
   // SignalR inbox updates
-  useInboxUpdates(selectedInboxId, {
+  useInboxUpdates(inboxIdsToJoin, {
     onMessageReceived: (conversationId, message) => {
       setConversations((prev) => {
         const idx = prev.findIndex((c) => c.id === conversationId);
-        if (idx === -1) return prev; // unknown conversation, ignore
+        if (idx === -1) {
+          // New conversation — fetch it from the API and prepend
+          fetchNewConversation(conversationId);
+          return prev;
+        }
         const updated = { ...prev[idx] };
         updated.lastMessageAt = message.createdAt;
         updated.lastMessagePreview = message.content ?? '';
@@ -219,7 +263,7 @@ export default function InboxPage() {
                   key={c.id}
                   conversation={c}
                   active={c.id === selectedId}
-                  onClick={() => setSelectedId(c.id)}
+                  onClick={() => selectConversation(c.id)}
                 />
               ))}
               {loadingMore && (
@@ -240,6 +284,11 @@ export default function InboxPage() {
             onToggleContactPanel={() => setContactPanelOpen(!contactPanelOpen)}
             onConversationUpdated={(updated) => {
               setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+            }}
+            onConversationDeleted={(id) => {
+              setConversations((prev) => prev.filter((c) => c.id !== id));
+              setSelectedIdRaw(null);
+              setContactPanelOpen(false);
             }}
           />
         ) : (

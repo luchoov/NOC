@@ -23,6 +23,8 @@ public sealed class EvolutionApiClient(
     private const string SetWebhookEndpointTemplate = "webhook/set/{0}";
     private const string FindWebhookEndpointTemplate = "webhook/find/{0}";
     private const string StatusEndpointTemplate = "instance/connectionState/{0}";
+    private const string DownloadMediaEndpointTemplate = "chat/getBase64FromMediaMessage/{0}";
+    private const string SendMediaEndpointTemplate = "message/sendMedia/{0}";
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
@@ -157,6 +159,41 @@ public sealed class EvolutionApiClient(
 
         var status = ExtractStatus(payload);
         return new EvolutionInstanceStatusResponse(instanceName, status, payload);
+    }
+
+    public async Task<EvolutionMediaDownloadResponse> DownloadMediaAsync(
+        string instanceName,
+        EvolutionMediaDownloadRequest request,
+        EvolutionProxyOptions? proxy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceName);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var encodedName = Uri.EscapeDataString(instanceName);
+        var endpoint = string.Format(DownloadMediaEndpointTemplate, encodedName);
+        var payload = await SendAsync(HttpMethod.Post, endpoint, request, proxy, cancellationToken);
+
+        var base64 = TryGetString(payload, "base64");
+        var mimeType = TryGetString(payload, "mimetype") ?? TryGetString(payload, "mediatype");
+        var fileName = TryGetString(payload, "fileName") ?? TryGetString(payload, "filename");
+
+        return new EvolutionMediaDownloadResponse(base64, mimeType, fileName);
+    }
+
+    public async Task<EvolutionApiResponse> SendMediaMessageAsync(
+        string instanceName,
+        EvolutionSendMediaRequest request,
+        EvolutionProxyOptions? proxy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceName);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var encodedName = Uri.EscapeDataString(instanceName);
+        var endpoint = string.Format(SendMediaEndpointTemplate, encodedName);
+        var payload = await SendAsync(HttpMethod.Post, endpoint, request, proxy, cancellationToken);
+        return new EvolutionApiResponse(payload);
     }
 
     private async Task<JsonObject> SendAsync(

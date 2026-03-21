@@ -102,6 +102,38 @@ public sealed record EvolutionWebhookConfigurationResponse(
     IReadOnlyList<string> Events,
     JsonObject Payload);
 
+public sealed record EvolutionMediaDownloadRequest
+{
+    [JsonPropertyName("message")]
+    public required JsonObject Message { get; init; }
+
+    [JsonPropertyName("convertToMp4")]
+    public bool ConvertToMp4 { get; init; }
+}
+
+public sealed record EvolutionMediaDownloadResponse(
+    string? Base64,
+    string? MimeType,
+    string? FileName);
+
+public sealed record EvolutionSendMediaRequest
+{
+    [JsonPropertyName("number")]
+    public required string Number { get; init; }
+
+    [JsonPropertyName("mediatype")]
+    public required string MediaType { get; init; } // image, video, audio, document
+
+    [JsonPropertyName("media")]
+    public required string Media { get; init; } // URL or base64
+
+    [JsonPropertyName("caption")]
+    public string? Caption { get; init; }
+
+    [JsonPropertyName("fileName")]
+    public string? FileName { get; init; }
+}
+
 public sealed record EvolutionInstanceStatusResponse(
     string InstanceName,
     string Status,

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using NOC.Shared.Domain.Entities;
 using NOC.Shared.Domain.Enums;
@@ -13,6 +14,8 @@ using NOC.Shared.Infrastructure;
 using NOC.Shared.Infrastructure.Crypto;
 using NOC.Shared.Infrastructure.Data;
 using NOC.Shared.Infrastructure.Evolution;
+using NOC.Web.Hubs;
+using NOC.Shared.Infrastructure.Storage;
 using NOC.Web.Messages;
 
 namespace NOC.Web.Controllers;
@@ -23,7 +26,9 @@ namespace NOC.Web.Controllers;
 public class MessageController(
     NocDbContext db,
     IEvolutionApiClient evolutionApiClient,
+    IMediaStorageService mediaStorage,
     AuditService auditService,
+    IHubContext<NocHub> hubContext,
     IServiceProvider serviceProvider,
     ILogger<MessageController> logger) : ControllerBase
 {
@@ -184,6 +189,13 @@ LIMIT {limit}")
 
         await db.SaveChangesAsync();
 
+        // Push outbound message to SignalR (conversation + inbox groups)
+        var msgResponse = MapToResponse(message);
+        await hubContext.Clients.Group($"conversation:{conversationId}")
+            .SendAsync("MessageReceived", conversationId.ToString(), msgResponse, cancellationToken);
+        await hubContext.Clients.Group($"inbox:{conversation.InboxId}")
+            .SendAsync("MessageReceived", conversationId.ToString(), msgResponse, cancellationToken);
+
         await auditService.LogAsync(
             request.IsPrivateNote ? "CONVERSATION_INTERNAL_NOTE_CREATED" : "MESSAGE_SENT",
             entityType: "MESSAGE",
@@ -196,7 +208,176 @@ LIMIT {limit}")
                 message.IsPrivateNote,
             });
 
-        return Ok(MapToResponse(message));
+        return Ok(msgResponse);
+    }
+
+    [HttpGet("{messageId:guid}/media")]
+    public async Task<IActionResult> GetMedia(Guid conversationId, Guid messageId, CancellationToken cancellationToken)
+    {
+        var message = await db.Messages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == messageId && m.ConversationId == conversationId, cancellationToken);
+
+        if (message is null)
+            return NotFound(new { message = "Message not found" });
+
+        var conversation = await db.Conversations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+
+        if (conversation is null)
+            return NotFound(new { message = "Conversation not found" });
+        if (!await HasInboxAccessAsync(conversation.InboxId))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(message.MediaUrl))
+            return NotFound(new { message = "No media attached" });
+
+        try
+        {
+            var stream = await mediaStorage.DownloadAsync(message.MediaUrl, cancellationToken);
+            var contentType = message.MediaMimeType ?? "application/octet-stream";
+            var fileName = message.MediaFilename ?? "media";
+
+            // Inline for viewable types (images, audio, video), attachment for documents
+            var isInline = contentType.StartsWith("image/") || contentType.StartsWith("audio/") || contentType.StartsWith("video/");
+
+            Response.Headers["Cache-Control"] = "private, max-age=3600";
+
+            return File(stream, contentType, fileName, enableRangeProcessing: true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to download media for message {MessageId}", messageId);
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = "Failed to retrieve media" });
+        }
+    }
+
+    [HttpPost("media")]
+    [RequestSizeLimit(20 * 1024 * 1024)] // 20 MB
+    public async Task<IActionResult> SendMedia(
+        Guid conversationId,
+        IFormFile file,
+        [FromForm] string? caption = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (file.Length == 0)
+            return BadRequest(new { message = "File is empty." });
+
+        var conversation = await db.Conversations
+            .Include(c => c.Inbox)
+                .ThenInclude(i => i.ProxyOutbound)
+            .Include(c => c.Contact)
+            .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+
+        if (conversation is null)
+            return NotFound(new { message = "Conversation not found" });
+        if (!await HasInboxAccessAsync(conversation.InboxId))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(conversation.Inbox.EvolutionInstanceName))
+            return Conflict(new { message = "Inbox has no Evolution instance configured." });
+
+        var senderAgentId = GetCurrentAgentId();
+        var now = DateTimeOffset.UtcNow;
+        var messageId = Guid.CreateVersion7();
+        var mimeType = file.ContentType ?? "application/octet-stream";
+        var messageType = InferMessageType(mimeType);
+        var fileName = file.FileName ?? "media";
+        var objectKey = $"{conversation.InboxId}/{now:yyyy/MM}/{messageId}/{fileName}";
+
+        // Upload to MinIO
+        await using var stream = file.OpenReadStream();
+        await mediaStorage.UploadAsync(stream, objectKey, mimeType, file.Length, cancellationToken);
+
+        // Generate presigned URL for Evolution API
+        var presignedUrl = await mediaStorage.GeneratePresignedUrlAsync(objectKey, TimeSpan.FromMinutes(15), cancellationToken);
+
+        // Send via Evolution API
+        try
+        {
+            var proxyOptions = BuildEvolutionProxyOptions(conversation.Inbox.ProxyOutbound);
+            var recipientResolution = await ResolveOutboundRecipientAsync(conversation, proxyOptions, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(recipientResolution.FailureMessage))
+                return Conflict(new { message = recipientResolution.FailureMessage });
+
+            var evolutionMediaType = messageType switch
+            {
+                MessageType.IMAGE => "image",
+                MessageType.VIDEO => "video",
+                MessageType.AUDIO => "audio",
+                _ => "document",
+            };
+
+            var evolutionResponse = await evolutionApiClient.SendMediaMessageAsync(
+                conversation.Inbox.EvolutionInstanceName,
+                new EvolutionSendMediaRequest
+                {
+                    Number = recipientResolution.Number,
+                    MediaType = evolutionMediaType,
+                    Media = presignedUrl,
+                    Caption = caption,
+                    FileName = fileName,
+                },
+                proxyOptions,
+                cancellationToken);
+
+            var message = new Message
+            {
+                Id = messageId,
+                ConversationId = conversationId,
+                Direction = MessageDirection.OUTBOUND,
+                Type = messageType,
+                Content = caption,
+                MediaUrl = objectKey,
+                MediaMimeType = mimeType,
+                MediaFilename = fileName,
+                MediaSizeBytes = file.Length,
+                SentByAgentId = senderAgentId,
+                DeliveryStatus = DeliveryStatus.SENT,
+                DeliveryUpdatedAt = DateTimeOffset.UtcNow,
+                ExternalId = ExtractExternalId(evolutionResponse.Payload),
+                ProviderMetadata = evolutionResponse.Payload.ToJsonString(),
+                IsPrivateNote = false,
+                CreatedAt = now,
+            };
+
+            db.Messages.Add(message);
+
+            conversation.LastMessageAt = now;
+            conversation.LastMessagePreview = caption ?? $"[{evolutionMediaType}]";
+            conversation.LastMessageDirection = MessageDirection.OUTBOUND.ToString();
+            conversation.LastOutboundAt = now;
+            conversation.UpdatedAt = now;
+
+            await db.SaveChangesAsync(cancellationToken);
+
+            var msgResponse = MapToResponse(message);
+            await hubContext.Clients.Group($"conversation:{conversationId}")
+                .SendAsync("MessageReceived", conversationId.ToString(), msgResponse, cancellationToken);
+            await hubContext.Clients.Group($"inbox:{conversation.InboxId}")
+                .SendAsync("MessageReceived", conversationId.ToString(), msgResponse, cancellationToken);
+
+            return Ok(msgResponse);
+        }
+        catch (EvolutionApiException ex)
+        {
+            logger.LogWarning(ex, "Evolution send media failed for conversation {ConversationId}", conversationId);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = "Failed to send media through Evolution API.",
+                detail = ex.Message,
+            });
+        }
+    }
+
+    private static MessageType InferMessageType(string mimeType)
+    {
+        if (mimeType.StartsWith("image/webp")) return MessageType.STICKER;
+        if (mimeType.StartsWith("image/")) return MessageType.IMAGE;
+        if (mimeType.StartsWith("video/")) return MessageType.VIDEO;
+        if (mimeType.StartsWith("audio/")) return MessageType.AUDIO;
+        return MessageType.DOCUMENT;
     }
 
     private async Task<bool> HasInboxAccessAsync(Guid inboxId)
@@ -521,6 +702,9 @@ LIMIT {limit}")
             message.Type,
             message.Content,
             message.MediaUrl,
+            message.MediaMimeType,
+            message.MediaFilename,
+            message.MediaSizeBytes,
             message.DeliveryStatus,
             message.DeliveryUpdatedAt,
             message.SentByAgentId,

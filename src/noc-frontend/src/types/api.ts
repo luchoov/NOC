@@ -132,6 +132,9 @@ export interface MessageResponse {
   type: MessageType;
   content: string | null;
   mediaUrl: string | null;
+  mediaMimeType: string | null;
+  mediaFilename: string | null;
+  mediaSizeBytes: number | null;
   deliveryStatus: DeliveryStatus | null;
   deliveryUpdatedAt: string | null;
   sentByAgentId: string | null;

@@ -26,8 +26,8 @@ export function updateContact(id: string, data: UpdateContactRequest) {
   return api.put<ContactResponse>(`/api/contacts/${id}`, data);
 }
 
-export function deleteContact(id: string) {
-  return api.del<void>(`/api/contacts/${id}`);
+export function deleteContact(id: string, force = false) {
+  return api.del<void>(`/api/contacts/${id}${force ? '?force=true' : ''}`);
 }
 
 export function addTag(id: string, data: AddTagRequest) {

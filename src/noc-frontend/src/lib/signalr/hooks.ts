@@ -3,9 +3,11 @@
 
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import {
   getConnection,
+  getReadyVersion,
+  onReady,
   startHub,
   stopHub,
   joinInbox,
@@ -17,6 +19,15 @@ import { useAuthStore } from '@/lib/store/auth.store';
 import type { MessageResponse } from '@/types/api';
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
+
+/** Subscribe to the connection-ready version so hooks re-run when connection is established. */
+function useHubReady(): number {
+  return useSyncExternalStore(
+    onReady,
+    getReadyVersion,
+    () => 0, // server snapshot
+  );
+}
 
 export function useSignalR() {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -45,7 +56,7 @@ export function useSignalR() {
 }
 
 export function useInboxUpdates(
-  inboxId: string | null,
+  inboxIds: string[],
   callbacks: {
     onMessageReceived?: (conversationId: string, message: MessageResponse) => void;
     onConversationAssigned?: (conversationId: string, agentId: string) => void;
@@ -57,12 +68,21 @@ export function useInboxUpdates(
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
 
+  // Stable key so useEffect re-runs only when the actual IDs change
+  const idsKey = inboxIds.slice().sort().join(',');
+
+  // Re-run when connection becomes ready (fixes race condition with useSignalR)
+  const ready = useHubReady();
+
   useEffect(() => {
-    if (!inboxId) return;
+    if (inboxIds.length === 0) return;
     const conn = getConnection();
     if (!conn) return;
 
-    joinInbox(inboxId).catch(() => {});
+    // Join all provided inbox groups
+    for (const id of inboxIds) {
+      joinInbox(id).catch(() => {});
+    }
 
     const onMsg = (cId: string, m: MessageResponse) => cbRef.current.onMessageReceived?.(cId, m);
     const onAssign = (cId: string, aId: string) => cbRef.current.onConversationAssigned?.(cId, aId);
@@ -77,14 +97,17 @@ export function useInboxUpdates(
     conn.on('SessionDisconnected', onDisc);
 
     return () => {
-      leaveInbox(inboxId).catch(() => {});
+      for (const id of inboxIds) {
+        leaveInbox(id).catch(() => {});
+      }
       conn.off('MessageReceived', onMsg);
       conn.off('ConversationAssigned', onAssign);
       conn.off('ConversationStatusChanged', onStatus);
       conn.off('InboxBanSuspected', onBan);
       conn.off('SessionDisconnected', onDisc);
     };
-  }, [inboxId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey, ready]);
 }
 
 export function useConversationUpdates(
@@ -95,6 +118,8 @@ export function useConversationUpdates(
 ) {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
+
+  const ready = useHubReady();
 
   useEffect(() => {
     if (!conversationId) return;
@@ -110,5 +135,6 @@ export function useConversationUpdates(
       leaveConversation(conversationId).catch(() => {});
       conn.off('MessageReceived', onMsg);
     };
-  }, [conversationId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, ready]);
 }

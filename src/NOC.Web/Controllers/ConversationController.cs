@@ -194,6 +194,49 @@ WHERE
         return Ok(MapToResponse(updated));
     }
 
+    [HttpPost("{id:guid}/read")]
+    public async Task<IActionResult> MarkAsRead(Guid id)
+    {
+        var conversation = await db.Conversations.FirstOrDefaultAsync(c => c.Id == id);
+        if (conversation is null)
+            return NotFound(new { message = "Conversation not found" });
+        if (!await HasInboxAccessAsync(conversation.InboxId))
+            return Forbid();
+
+        if (conversation.UnreadCount == 0)
+            return NoContent();
+
+        conversation.UnreadCount = 0;
+        conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "ADMIN,SUPERVISOR")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var conversation = await db.Conversations
+            .Include(c => c.Contact)
+            .FirstOrDefaultAsync(c => c.Id == id);
+
+        if (conversation is null)
+            return NotFound(new { message = "Conversation not found" });
+
+        // Messages cascade via EF config
+        db.Conversations.Remove(conversation);
+        await db.SaveChangesAsync();
+
+        await auditService.LogAsync(
+            "CONVERSATION_DELETED",
+            entityType: "CONVERSATION",
+            entityId: id,
+            payload: new { conversation.ContactId, contactPhone = conversation.Contact.Phone });
+
+        return NoContent();
+    }
+
     private async Task<bool> HasInboxAccessAsync(Guid inboxId)
     {
         var role = ResolveRole();

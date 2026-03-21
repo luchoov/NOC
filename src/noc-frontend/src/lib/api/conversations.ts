@@ -24,3 +24,11 @@ export function assignConversation(id: string, data: AssignConversationRequest) 
 export function updateConversationStatus(id: string, data: UpdateConversationStatusRequest) {
   return api.post<ConversationResponse>(`/api/conversations/${id}/status`, data);
 }
+
+export function markConversationRead(id: string) {
+  return api.post<void>(`/api/conversations/${id}/read`, {});
+}
+
+export function deleteConversation(id: string) {
+  return api.del<void>(`/api/conversations/${id}`);
+}

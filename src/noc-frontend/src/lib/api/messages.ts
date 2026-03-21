@@ -17,6 +17,21 @@ export function sendMessage(conversationId: string, data: SendMessageRequest) {
   );
 }
 
-export function getMediaUrl(messageId: string): string {
-  return `/api/messages/${messageId}/media`;
+export function sendMediaMessage(
+  conversationId: string,
+  file: File,
+  caption?: string,
+) {
+  const extra: Record<string, string> = {};
+  if (caption) extra.caption = caption;
+  return api.upload<MessageResponse>(
+    `/api/conversations/${conversationId}/messages/media`,
+    file,
+    'file',
+    extra,
+  );
+}
+
+export function getMediaUrl(conversationId: string, messageId: string): string {
+  return `/api/conversations/${conversationId}/messages/${messageId}/media`;
 }

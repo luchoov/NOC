@@ -117,9 +117,19 @@ class ApiClient {
     return this.request<T>('DELETE', path);
   }
 
-  async upload<T>(path: string, file: File, fieldName = 'file'): Promise<T> {
+  async upload<T>(
+    path: string,
+    file: File,
+    fieldName = 'file',
+    extraFields?: Record<string, string>,
+  ): Promise<T> {
     const form = new FormData();
     form.append(fieldName, file);
+    if (extraFields) {
+      for (const [k, v] of Object.entries(extraFields)) {
+        form.append(k, v);
+      }
+    }
 
     const h: Record<string, string> = {
       'X-Correlation-Id': crypto.randomUUID(),
@@ -127,17 +137,33 @@ class ApiClient {
     const token = useAuthStore.getState().accessToken;
     if (token) h['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    let res = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: h,
       body: form,
     });
 
+    if (res.status === 401) {
+      const ok = await this.tryRefresh();
+      if (ok) {
+        const h2: Record<string, string> = { 'X-Correlation-Id': crypto.randomUUID() };
+        const t2 = useAuthStore.getState().accessToken;
+        if (t2) h2['Authorization'] = `Bearer ${t2}`;
+        res = await fetch(`${this.baseUrl}${path}`, { method: 'POST', headers: h2, body: form });
+      } else {
+        useAuthStore.getState().clearAuth();
+        if (typeof window !== 'undefined') window.location.href = '/login';
+        throw { status: 401, message: 'Session expired' } satisfies ApiError;
+      }
+    }
+
     if (!res.ok) {
-      throw {
-        status: res.status,
-        message: res.statusText,
-      } satisfies ApiError;
+      const err: ApiError = { status: res.status, message: res.statusText };
+      try {
+        const body = await res.json();
+        err.detail = body.detail || body.message || JSON.stringify(body);
+      } catch { /* empty */ }
+      throw err;
     }
     return res.json();
   }

@@ -11,7 +11,9 @@ using NOC.Shared.Infrastructure.Crypto;
 using NOC.Shared.Infrastructure.Data;
 using NOC.Shared.Infrastructure.Evolution;
 using NOC.Shared.Infrastructure.Outbox;
+using NOC.Shared.Infrastructure.Storage;
 using NOC.Web.Auth;
+using NOC.Web.Hubs;
 using NOC.Web.Middleware;
 using Serilog;
 
@@ -41,6 +43,7 @@ try
     var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
     builder.Services.AddOutbox(redisConnection);
     builder.Services.AddEvolutionApiClient(builder.Configuration);
+    builder.Services.AddMediaStorage(builder.Configuration);
 
     // Encryption
     var masterKeyBase64 = builder.Configuration["Encryption:MasterKey"];
@@ -68,6 +71,21 @@ try
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
                 ClockSkew = TimeSpan.Zero,
             };
+
+            // SignalR sends JWT via query string (WebSocket can't use headers)
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    if (!string.IsNullOrEmpty(accessToken) &&
+                        context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                    {
+                        context.Token = accessToken;
+                    }
+                    return Task.CompletedTask;
+                },
+            };
         });
     builder.Services.AddAuthorization();
 
@@ -82,6 +100,23 @@ try
         });
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
+    builder.Services.AddSignalR()
+        .AddJsonProtocol(options =>
+        {
+            options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        });
+    builder.Services.AddHostedService<SignalRBridge>();
+
+    builder.Services.AddCors(options =>
+    {
+        options.AddDefaultPolicy(policy =>
+        {
+            policy.SetIsOriginAllowed(_ => true)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        });
+    });
 
     var app = builder.Build();
 
@@ -95,11 +130,24 @@ try
         app.UseSwaggerUI();
     }
 
+    app.UseCors();
     app.UseAuthentication();
     app.UseAuthorization();
 
     app.MapControllers();
+    app.MapHub<NocHub>("/hubs/noc");
     app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "noc-web" }));
+
+    // Ensure MinIO bucket exists
+    try
+    {
+        var mediaStorage = app.Services.GetRequiredService<IMediaStorageService>();
+        await mediaStorage.EnsureBucketAsync();
+    }
+    catch (Exception bucketEx)
+    {
+        Log.Warning(bucketEx, "Failed to ensure MinIO bucket on startup");
+    }
 
     app.Run();
 }

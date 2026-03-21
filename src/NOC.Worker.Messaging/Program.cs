@@ -6,6 +6,7 @@ using NOC.Shared.Infrastructure;
 using NOC.Shared.Infrastructure.Crypto;
 using NOC.Shared.Infrastructure.Data;
 using NOC.Shared.Infrastructure.Evolution;
+using NOC.Shared.Infrastructure.Storage;
 using StackExchange.Redis;
 using NOC.Worker.Messaging;
 
@@ -18,6 +19,7 @@ builder.Services.AddDbContext<NocDbContext>(options =>
 var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnection));
 builder.Services.AddEvolutionApiClient(builder.Configuration);
+builder.Services.AddMediaStorage(builder.Configuration);
 
 var masterKeyBase64 = builder.Configuration["Encryption:MasterKey"];
 if (!string.IsNullOrEmpty(masterKeyBase64))

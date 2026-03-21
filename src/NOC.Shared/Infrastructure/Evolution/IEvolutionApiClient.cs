@@ -42,5 +42,17 @@ public interface IEvolutionApiClient
         string instanceName,
         EvolutionProxyOptions? proxy = null,
         CancellationToken cancellationToken = default);
+
+    Task<EvolutionMediaDownloadResponse> DownloadMediaAsync(
+        string instanceName,
+        EvolutionMediaDownloadRequest request,
+        EvolutionProxyOptions? proxy = null,
+        CancellationToken cancellationToken = default);
+
+    Task<EvolutionApiResponse> SendMediaMessageAsync(
+        string instanceName,
+        EvolutionSendMediaRequest request,
+        EvolutionProxyOptions? proxy = null,
+        CancellationToken cancellationToken = default);
 }
 

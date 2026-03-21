@@ -8,6 +8,8 @@ import { useAuthStore } from '@/lib/store/auth.store';
 const HUB_URL = process.env.NEXT_PUBLIC_SIGNALR_URL || 'http://localhost:8080';
 
 let connection: signalR.HubConnection | null = null;
+let readyVersion = 0;
+const readyListeners = new Set<() => void>();
 
 function buildConnection(): signalR.HubConnection {
   return new signalR.HubConnectionBuilder()
@@ -26,6 +28,22 @@ export function getConnection(): signalR.HubConnection | null {
   return connection;
 }
 
+/** Returns a version number that increments each time the connection becomes ready. */
+export function getReadyVersion(): number {
+  return readyVersion;
+}
+
+/** Subscribe to connection-ready events. Returns an unsubscribe function. */
+export function onReady(cb: () => void): () => void {
+  readyListeners.add(cb);
+  return () => readyListeners.delete(cb);
+}
+
+function notifyReady() {
+  readyVersion++;
+  for (const cb of readyListeners) cb();
+}
+
 export async function startHub(): Promise<void> {
   // Always create a fresh connection to pick up current token
   if (connection) {
@@ -38,6 +56,9 @@ export async function startHub(): Promise<void> {
   connection = buildConnection();
   try {
     await connection.start();
+    // Also notify on reconnect
+    connection.onreconnected(() => notifyReady());
+    notifyReady();
   } catch {
     // Hub may not be available yet — app works without real-time updates
     console.warn('[SignalR] Hub not available, real-time updates disabled');

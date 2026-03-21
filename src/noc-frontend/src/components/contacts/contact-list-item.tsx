@@ -3,27 +3,56 @@
 
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, Mail, Phone, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Loader2, Mail, Phone, Sparkles, Trash2, UserX } from 'lucide-react';
+import { toast } from 'sonner';
+import { deleteContact } from '@/lib/api/contacts';
 import type { ContactResponse } from '@/types/api';
+import type { ApiError } from '@/lib/api/client';
 import { formatPhone } from '@/lib/utils/format-phone';
 import { timeAgo } from '@/lib/utils/format-date';
 
-export function ContactListItem({
-  contact,
-}: {
+interface ContactListItemProps {
   contact: ContactResponse;
-}) {
+  onDeleted?: (id: string) => void;
+}
+
+export function ContactListItem({ contact, onDeleted }: ContactListItemProps) {
+  const [deleting, setDeleting] = useState(false);
   const displayName = contact.name || formatPhone(contact.phone);
   const customAttrCount = Object.keys(contact.customAttrs).length;
 
+  async function handleDelete(force: boolean) {
+    const msg = force
+      ? `¿Eliminar "${displayName}" y TODAS sus conversaciones y mensajes? No se puede deshacer.`
+      : `¿Eliminar "${displayName}"? Si tiene conversaciones se bloqueará.`;
+    if (!confirm(msg)) return;
+
+    setDeleting(true);
+    try {
+      await deleteContact(contact.id, force);
+      toast.success(`Contacto "${displayName}" eliminado`);
+      onDeleted?.(contact.id);
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      if (err.status === 409 && !force) {
+        // Has conversations — offer force delete
+        if (confirm('Este contacto tiene conversaciones. ¿Eliminar contacto junto con todas sus conversaciones y mensajes?')) {
+          await handleDelete(true);
+        }
+      } else {
+        toast.error(err.detail || 'Error al eliminar contacto');
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
-    <Link
-      href={`/contacts/${contact.id}`}
-      className="group rounded-xl border border-zinc-800/60 bg-zinc-900/50 p-4 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
-    >
+    <div className="group rounded-xl border border-zinc-800/60 bg-zinc-900/50 p-4 transition-colors hover:border-zinc-700 hover:bg-zinc-900">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
+        <Link href={`/contacts/${contact.id}`} className="flex min-w-0 flex-1 items-start gap-3">
           <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-500/10 text-sm font-semibold text-blue-400">
             {displayName.charAt(0).toUpperCase()}
           </div>
@@ -49,9 +78,31 @@ export function ContactListItem({
               )}
             </div>
           </div>
-        </div>
+        </Link>
 
-        <ArrowUpRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-600 transition-colors group-hover:text-blue-400" />
+        <div className="flex shrink-0 items-center gap-1">
+          {/* Delete contact only */}
+          <button
+            onClick={() => handleDelete(false)}
+            disabled={deleting}
+            title="Eliminar contacto"
+            className="grid h-7 w-7 place-items-center rounded-md text-zinc-600 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100 disabled:opacity-50"
+          >
+            {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          </button>
+          {/* Force delete: contact + conversations + messages */}
+          <button
+            onClick={() => handleDelete(true)}
+            disabled={deleting}
+            title="Eliminar contacto + conversaciones + mensajes"
+            className="grid h-7 w-7 place-items-center rounded-md text-zinc-600 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100 disabled:opacity-50"
+          >
+            <UserX className="h-3.5 w-3.5" />
+          </button>
+          <Link href={`/contacts/${contact.id}`} className="grid h-7 w-7 place-items-center">
+            <ArrowUpRight className="h-4 w-4 text-zinc-600 transition-colors group-hover:text-blue-400" />
+          </Link>
+        </div>
       </div>
 
       {contact.tags.length > 0 && (
@@ -74,6 +125,6 @@ export function ContactListItem({
         </span>
         <span>Actualizado {timeAgo(contact.updatedAt)}</span>
       </div>
-    </Link>
+    </div>
   );
 }

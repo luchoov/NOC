@@ -4,9 +4,9 @@
 'use client';
 
 import { useState } from 'react';
-import { User, CheckCircle2, RotateCcw, UserPlus, PanelRightOpen, Loader2 } from 'lucide-react';
+import { User, CheckCircle2, RotateCcw, UserPlus, PanelRightOpen, Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { assignConversation, updateConversationStatus } from '@/lib/api/conversations';
+import { assignConversation, updateConversationStatus, deleteConversation } from '@/lib/api/conversations';
 import { useAuthStore } from '@/lib/store/auth.store';
 import type { ConversationResponse, ConversationStatus } from '@/types/api';
 import type { ApiError } from '@/lib/api/client';
@@ -17,12 +17,14 @@ interface ChatHeaderProps {
   conversation: ConversationResponse;
   onToggleContactPanel: () => void;
   onConversationUpdated: (c: ConversationResponse) => void;
+  onConversationDeleted?: (id: string) => void;
 }
 
-export function ChatHeader({ conversation: c, onToggleContactPanel, onConversationUpdated }: ChatHeaderProps) {
+export function ChatHeader({ conversation: c, onToggleContactPanel, onConversationUpdated, onConversationDeleted }: ChatHeaderProps) {
   const agent = useAuthStore((s) => s.agent);
   const [assigning, setAssigning] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const displayName = c.contactName || c.contactPhone;
   const statusCfg = CONVERSATION_STATUS[c.status] ?? CONVERSATION_STATUS.OPEN;
@@ -48,6 +50,21 @@ export function ChatHeader({ conversation: c, onToggleContactPanel, onConversati
       }
     } finally {
       setAssigning(false);
+    }
+  }
+
+  async function handleDeleteConversation() {
+    if (!confirm('¿Eliminar esta conversación y todos sus mensajes? Esta acción no se puede deshacer.')) return;
+    setDeleting(true);
+    try {
+      await deleteConversation(c.id);
+      toast.success('Conversación eliminada');
+      onConversationDeleted?.(c.id);
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast.error(err.detail || 'Error al eliminar conversación');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -127,6 +144,17 @@ export function ChatHeader({ conversation: c, onToggleContactPanel, onConversati
             Reabrir
           </button>
         )}
+
+        {/* Delete conversation */}
+        <button
+          onClick={handleDeleteConversation}
+          disabled={deleting}
+          title="Eliminar conversación"
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+        >
+          {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+          Eliminar
+        </button>
 
         {/* Contact panel toggle */}
         <button

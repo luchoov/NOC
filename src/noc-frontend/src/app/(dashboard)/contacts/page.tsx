@@ -204,7 +204,11 @@ export default function ContactsPage() {
 
               <div className="grid gap-3 xl:grid-cols-2">
                 {contacts.map((contact) => (
-                  <ContactListItem key={contact.id} contact={contact} />
+                  <ContactListItem
+                    key={contact.id}
+                    contact={contact}
+                    onDeleted={(id) => setContacts((prev) => prev.filter((c) => c.id !== id))}
+                  />
                 ))}
               </div>
             </div>

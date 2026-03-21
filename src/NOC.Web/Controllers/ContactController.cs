@@ -149,15 +149,26 @@ public class ContactController(NocDbContext db, AuditService auditService) : Con
     }
 
     [HttpDelete("{id:guid}")]
-    public async Task<IActionResult> Delete(Guid id)
+    public async Task<IActionResult> Delete(Guid id, [FromQuery] bool force = false)
     {
-        var contact = await db.Contacts.FirstOrDefaultAsync(c => c.Id == id);
+        var contact = await db.Contacts
+            .Include(c => c.Tags)
+            .FirstOrDefaultAsync(c => c.Id == id);
         if (contact is null)
             return NotFound(new { message = "Contact not found" });
 
-        var hasConversations = await db.Conversations.AnyAsync(c => c.ContactId == id);
-        if (hasConversations)
-            return Conflict(new { message = "Cannot delete a contact with conversations." });
+        var conversations = await db.Conversations
+            .Where(c => c.ContactId == id)
+            .ToListAsync();
+
+        if (conversations.Count > 0 && !force)
+            return Conflict(new { message = "Cannot delete a contact with conversations. Use ?force=true to delete contact and all conversations." });
+
+        if (conversations.Count > 0)
+        {
+            // Messages cascade via EF config on Conversation delete
+            db.Conversations.RemoveRange(conversations);
+        }
 
         db.Contacts.Remove(contact);
         await db.SaveChangesAsync();
@@ -166,7 +177,7 @@ public class ContactController(NocDbContext db, AuditService auditService) : Con
             "CONTACT_DELETED",
             entityType: "CONTACT",
             entityId: id,
-            payload: new { contact.Phone, contact.Name });
+            payload: new { contact.Phone, contact.Name, force, conversationsDeleted = conversations.Count });
 
         return NoContent();
     }
