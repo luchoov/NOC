@@ -25,13 +25,15 @@ export function useSignalR() {
   useEffect(() => {
     if (!isAuth) return;
 
-    const conn = getConnection();
-    conn.onreconnecting(() => setStatus('reconnecting'));
-    conn.onreconnected(() => setStatus('connected'));
-    conn.onclose(() => setStatus('disconnected'));
-
     startHub()
-      .then(() => setStatus('connected'))
+      .then(() => {
+        const conn = getConnection();
+        if (!conn) return;
+        conn.onreconnecting(() => setStatus('reconnecting'));
+        conn.onreconnected(() => setStatus('connected'));
+        conn.onclose(() => setStatus('disconnected'));
+        setStatus('connected');
+      })
       .catch(() => setStatus('disconnected'));
 
     return () => {
@@ -58,6 +60,7 @@ export function useInboxUpdates(
   useEffect(() => {
     if (!inboxId) return;
     const conn = getConnection();
+    if (!conn) return;
 
     joinInbox(inboxId).catch(() => {});
 
@@ -96,6 +99,7 @@ export function useConversationUpdates(
   useEffect(() => {
     if (!conversationId) return;
     const conn = getConnection();
+    if (!conn) return;
 
     joinConversation(conversationId).catch(() => {});
 

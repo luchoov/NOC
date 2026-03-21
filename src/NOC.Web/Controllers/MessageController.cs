@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using NOC.Shared.Domain.Entities;
 using NOC.Shared.Domain.Enums;
 using NOC.Shared.Infrastructure;
+using NOC.Shared.Infrastructure.Crypto;
 using NOC.Shared.Infrastructure.Data;
 using NOC.Shared.Infrastructure.Evolution;
 using NOC.Web.Messages;
@@ -23,6 +24,7 @@ public class MessageController(
     NocDbContext db,
     IEvolutionApiClient evolutionApiClient,
     AuditService auditService,
+    IServiceProvider serviceProvider,
     ILogger<MessageController> logger) : ControllerBase
 {
     [HttpGet]
@@ -75,15 +77,16 @@ LIMIT {limit}")
     }
 
     [HttpPost]
-    public async Task<IActionResult> Send(Guid conversationId, [FromBody] SendMessageRequest request)
+    public async Task<IActionResult> Send(Guid conversationId, [FromBody] SendMessageRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(new { message = "Content is required." });
 
         var conversation = await db.Conversations
             .Include(c => c.Inbox)
+                .ThenInclude(i => i.ProxyOutbound)
             .Include(c => c.Contact)
-            .FirstOrDefaultAsync(c => c.Id == conversationId);
+            .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
 
         if (conversation is null)
             return NotFound(new { message = "Conversation not found" });
@@ -122,13 +125,36 @@ LIMIT {limit}")
 
             try
             {
+                var proxyOptions = BuildEvolutionProxyOptions(conversation.Inbox.ProxyOutbound);
+                var recipientResolution = await ResolveOutboundRecipientAsync(conversation, proxyOptions, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(recipientResolution.FailureMessage))
+                {
+                    return Conflict(new
+                    {
+                        message = recipientResolution.FailureMessage,
+                        remoteJid = recipientResolution.RemoteJid,
+                    });
+                }
+
+                if (recipientResolution.PersistContactPhone &&
+                    !string.Equals(conversation.Contact.Phone, recipientResolution.Number, StringComparison.Ordinal) &&
+                    !await db.Contacts.AsNoTracking().AnyAsync(
+                        contact => contact.Id != conversation.Contact.Id && contact.Phone == recipientResolution.Number,
+                        cancellationToken))
+                {
+                    conversation.Contact.Phone = recipientResolution.Number;
+                    conversation.Contact.UpdatedAt = now;
+                }
+
                 var evolutionResponse = await evolutionApiClient.SendMessageAsync(
                     conversation.Inbox.EvolutionInstanceName,
                     new EvolutionSendMessageRequest
                     {
-                        Number = conversation.Contact.Phone,
+                        Number = recipientResolution.Number,
                         Text = request.Content.Trim(),
-                    });
+                    },
+                    proxyOptions,
+                    cancellationToken);
 
                 message.ExternalId = ExtractExternalId(evolutionResponse.Payload);
                 message.DeliveryStatus = DeliveryStatus.SENT;
@@ -141,8 +167,9 @@ LIMIT {limit}")
                 return StatusCode(StatusCodes.Status502BadGateway, new
                 {
                     message = "Failed to send message through Evolution API.",
-                    ex.StatusCode,
-                    ex.Message,
+                    statusCode = ex.StatusCode,
+                    detail = ex.Message,
+                    providerResponse = ex.ResponseBody,
                 });
             }
         }
@@ -188,6 +215,248 @@ LIMIT {limit}")
     {
         var raw = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
         return Guid.TryParse(raw, out var agentId) ? agentId : null;
+    }
+
+    private EvolutionProxyOptions? BuildEvolutionProxyOptions(ProxyOutbound? proxy)
+    {
+        if (proxy is null)
+            return null;
+
+        string? password = null;
+        if (!string.IsNullOrWhiteSpace(proxy.EncryptedPassword))
+        {
+            var encryptor = serviceProvider.GetService<AesGcmEncryptor>();
+            if (encryptor is null)
+                throw new InvalidOperationException("Encryption is not configured for proxy credentials.");
+
+            password = encryptor.Decrypt(proxy.EncryptedPassword);
+        }
+
+        return new EvolutionProxyOptions(
+            proxy.Protocol,
+            proxy.Host,
+            proxy.Port,
+            proxy.Username,
+            password);
+    }
+
+    private async Task<EvolutionRecipientResolution> ResolveOutboundRecipientAsync(
+        Conversation conversation,
+        EvolutionProxyOptions? proxyOptions,
+        CancellationToken cancellationToken)
+    {
+        var fallbackNumber = NormalizePhone(conversation.Contact.Phone);
+        if (string.IsNullOrWhiteSpace(fallbackNumber))
+        {
+            return new EvolutionRecipientResolution(
+                string.Empty,
+                false,
+                null,
+                "El contacto no tiene un numero valido para enviar mensajes.");
+        }
+
+        var latestInboundPayload = await db.Messages
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversation.Id && m.Direction == MessageDirection.INBOUND)
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => m.ProviderMetadata)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(latestInboundPayload))
+            return new EvolutionRecipientResolution(fallbackNumber, false, null, null);
+
+        var metadata = ParseJsonObject(latestInboundPayload);
+        if (metadata is null)
+            return new EvolutionRecipientResolution(fallbackNumber, false, null, null);
+
+        var directNumber = ExtractDirectWhatsappNumber(metadata);
+        if (!string.IsNullOrWhiteSpace(directNumber))
+        {
+            return new EvolutionRecipientResolution(
+                directNumber,
+                !string.Equals(directNumber, fallbackNumber, StringComparison.Ordinal),
+                ExtractInboundRemoteJid(metadata),
+                null);
+        }
+
+        var remoteJid = ExtractInboundRemoteJid(metadata);
+        var normalizedRemoteJid = NormalizePhone(remoteJid);
+        if (!LooksLikeLidJid(remoteJid) || !string.Equals(fallbackNumber, normalizedRemoteJid, StringComparison.Ordinal))
+            return new EvolutionRecipientResolution(fallbackNumber, false, remoteJid, null);
+
+        var resolvedNumber = await TryResolveLidNumberFromContactsAsync(
+            conversation.Inbox.EvolutionInstanceName!,
+            remoteJid!,
+            metadata,
+            proxyOptions,
+            cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(resolvedNumber))
+        {
+            logger.LogInformation(
+                "Resolved WhatsApp LID recipient for conversation {ConversationId}. RemoteJid={RemoteJid}, Number={Number}",
+                conversation.Id,
+                remoteJid,
+                resolvedNumber);
+
+            return new EvolutionRecipientResolution(
+                resolvedNumber,
+                !string.Equals(resolvedNumber, fallbackNumber, StringComparison.Ordinal),
+                remoteJid,
+                null);
+        }
+
+        return new EvolutionRecipientResolution(
+            fallbackNumber,
+            false,
+            remoteJid,
+            "No pudimos resolver el numero real de WhatsApp para este contacto. El ultimo inbound llego con un identificador @lid y Evolution no expuso el numero final.");
+    }
+
+    private async Task<string?> TryResolveLidNumberFromContactsAsync(
+        string instanceName,
+        string remoteJid,
+        JsonObject inboundMetadata,
+        EvolutionProxyOptions? proxyOptions,
+        CancellationToken cancellationToken)
+    {
+        var payload = await evolutionApiClient.FindContactsAsync(
+            instanceName,
+            request: null,
+            proxy: proxyOptions,
+            cancellationToken: cancellationToken);
+
+        var contacts = ExtractEvolutionContacts(payload.Payload);
+        if (contacts.Count == 0)
+            return null;
+
+        var inboundName =
+            TryGet(inboundMetadata, "data", "pushName")
+            ?? TryGet(inboundMetadata, "pushName")
+            ?? string.Empty;
+
+        var lidContact = contacts.FirstOrDefault(contact =>
+            string.Equals(contact.RemoteJid, remoteJid, StringComparison.OrdinalIgnoreCase));
+
+        var candidateContacts = contacts
+            .Where(contact => IsResolvableWhatsappJid(contact.RemoteJid))
+            .ToList();
+
+        string? resolved = null;
+        if (!string.IsNullOrWhiteSpace(lidContact?.ProfilePicUrl))
+        {
+            resolved = SelectUniqueNumber(candidateContacts.Where(contact =>
+                string.Equals(contact.ProfilePicUrl, lidContact.ProfilePicUrl, StringComparison.Ordinal) &&
+                string.Equals(contact.PushName, lidContact.PushName ?? inboundName, StringComparison.Ordinal)));
+
+            resolved ??= SelectUniqueNumber(candidateContacts.Where(contact =>
+                string.Equals(contact.ProfilePicUrl, lidContact.ProfilePicUrl, StringComparison.Ordinal)));
+        }
+
+        if (resolved is null && !string.IsNullOrWhiteSpace(lidContact?.PushName ?? inboundName))
+        {
+            var targetName = lidContact?.PushName ?? inboundName;
+            resolved = SelectUniqueNumber(candidateContacts.Where(contact =>
+                string.Equals(contact.PushName, targetName, StringComparison.Ordinal)));
+        }
+
+        return resolved;
+    }
+
+    private static IReadOnlyList<EvolutionContactCandidate> ExtractEvolutionContacts(JsonObject payload)
+    {
+        var contacts = new List<EvolutionContactCandidate>();
+        var items =
+            payload["items"] as JsonArray
+            ?? payload["contacts"] as JsonArray
+            ?? payload["records"] as JsonArray;
+
+        if (items is null)
+            return contacts;
+
+        foreach (var item in items)
+        {
+            if (item is not JsonObject jsonObject)
+                continue;
+
+            contacts.Add(new EvolutionContactCandidate(
+                TryGet(jsonObject, "remoteJid"),
+                TryGet(jsonObject, "pushName"),
+                TryGet(jsonObject, "profilePicUrl")));
+        }
+
+        return contacts;
+    }
+
+    private static string? SelectUniqueNumber(IEnumerable<EvolutionContactCandidate> contacts)
+    {
+        var numbers = contacts
+            .Select(contact => NormalizePhone(contact.RemoteJid))
+            .Where(number => !string.IsNullOrWhiteSpace(number))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return numbers.Count == 1 ? numbers[0] : null;
+    }
+
+    private static string? ExtractDirectWhatsappNumber(JsonObject metadata)
+    {
+        return NormalizePhone(
+            TryGet(metadata, "data", "key", "remoteJidAlt")
+            ?? TryGet(metadata, "key", "remoteJidAlt")
+            ?? TryGet(metadata, "data", "remoteJidAlt")
+            ?? TryGet(metadata, "remoteJidAlt")
+            ?? TryGet(metadata, "data", "senderPn")
+            ?? TryGet(metadata, "senderPn")
+            ?? TryGet(metadata, "data", "participantPn")
+            ?? TryGet(metadata, "participantPn"));
+    }
+
+    private static string? ExtractInboundRemoteJid(JsonObject metadata)
+    {
+        return TryGet(metadata, "data", "key", "remoteJid")
+            ?? TryGet(metadata, "key", "remoteJid")
+            ?? TryGet(metadata, "data", "remoteJid")
+            ?? TryGet(metadata, "remoteJid");
+    }
+
+    private static bool LooksLikeLidJid(string? remoteJid)
+    {
+        return !string.IsNullOrWhiteSpace(remoteJid) &&
+               remoteJid.EndsWith("@lid", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsResolvableWhatsappJid(string? remoteJid)
+    {
+        return !string.IsNullOrWhiteSpace(remoteJid) &&
+               !remoteJid.EndsWith("@lid", StringComparison.OrdinalIgnoreCase) &&
+               !remoteJid.EndsWith("@g.us", StringComparison.OrdinalIgnoreCase) &&
+               !remoteJid.EndsWith("@broadcast", StringComparison.OrdinalIgnoreCase) &&
+               !string.IsNullOrWhiteSpace(NormalizePhone(remoteJid));
+    }
+
+    private static string NormalizePhone(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var cleaned = value.Split('@')[0];
+        return new string(cleaned.Where(char.IsDigit).ToArray());
+    }
+
+    private static JsonObject? ParseJsonObject(string rawJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return null;
+
+        try
+        {
+            return JsonNode.Parse(rawJson) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static string? ExtractExternalId(JsonObject payload)
@@ -260,5 +529,16 @@ LIMIT {limit}")
             ParseJsonOrDefault(message.ProviderMetadata),
             message.CreatedAt);
     }
+
+    private sealed record EvolutionRecipientResolution(
+        string Number,
+        bool PersistContactPhone,
+        string? RemoteJid,
+        string? FailureMessage);
+
+    private sealed record EvolutionContactCandidate(
+        string? RemoteJid,
+        string? PushName,
+        string? ProfilePicUrl);
 }
 

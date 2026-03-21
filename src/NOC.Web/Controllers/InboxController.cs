@@ -25,8 +25,16 @@ public class InboxController(
     IEvolutionApiClient evolutionApiClient,
     AuditService auditService,
     IServiceProvider serviceProvider,
+    IConfiguration configuration,
     ILogger<InboxController> logger) : ControllerBase
 {
+    private static readonly string[] EvolutionWebhookEvents =
+    [
+        "MESSAGES_UPSERT",
+        "CONNECTION_UPDATE",
+        "QRCODE_UPDATED",
+    ];
+
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] ChannelType? channelType = null,
@@ -252,7 +260,9 @@ public class InboxController(
     [HttpPost("{id:guid}/provision-evolution")]
     public async Task<IActionResult> ProvisionEvolution(Guid id, [FromBody] ProvisionEvolutionRequest request)
     {
-        var inbox = await db.Inboxes.FirstOrDefaultAsync(i => i.Id == id);
+        var inbox = await db.Inboxes
+            .Include(i => i.ProxyOutbound)
+            .FirstOrDefaultAsync(i => i.Id == id);
         if (inbox is null)
             return NotFound(new { message = "Inbox not found" });
         if (inbox.ChannelType != ChannelType.WHATSAPP_UNOFFICIAL)
@@ -289,7 +299,9 @@ public class InboxController(
     [HttpPost("{id:guid}/connect")]
     public async Task<IActionResult> Connect(Guid id)
     {
-        var inbox = await db.Inboxes.FirstOrDefaultAsync(i => i.Id == id);
+        var inbox = await db.Inboxes
+            .Include(i => i.ProxyOutbound)
+            .FirstOrDefaultAsync(i => i.Id == id);
         if (inbox is null)
             return NotFound(new { message = "Inbox not found" });
         if (inbox.ChannelType != ChannelType.WHATSAPP_UNOFFICIAL)
@@ -299,11 +311,16 @@ public class InboxController(
 
         try
         {
-            var connectResponse = await evolutionApiClient.ConnectInstanceAsync(inbox.EvolutionInstanceName);
+            var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
+            var webhookWarning = await TryConfigureEvolutionWebhookAsync(inbox);
+
+            var connectResponse = await evolutionApiClient.ConnectInstanceAsync(inbox.EvolutionInstanceName, proxyOptions);
             inbox.EvolutionSessionStatus = "QR_PENDING";
             inbox.EvolutionLastHeartbeat = DateTimeOffset.UtcNow;
             inbox.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync();
+
+            AppendWebhookSetupPayload(connectResponse.Payload, inbox, webhookWarning);
 
             await auditService.LogAsync(
                 "INBOX_EVOLUTION_CONNECT_REQUESTED",
@@ -320,7 +337,66 @@ public class InboxController(
             {
                 message = "Evolution connect request failed.",
                 ex.StatusCode,
-                ex.Message,
+                detail = ex.Message,
+            });
+        }
+    }
+
+    [HttpPost("{id:guid}/configure-webhook")]
+    public async Task<IActionResult> ConfigureEvolutionWebhook(Guid id)
+    {
+        var inbox = await db.Inboxes
+            .Include(i => i.ProxyOutbound)
+            .FirstOrDefaultAsync(i => i.Id == id);
+        if (inbox is null)
+            return NotFound(new { message = "Inbox not found" });
+        if (inbox.ChannelType != ChannelType.WHATSAPP_UNOFFICIAL)
+            return BadRequest(new { message = "Webhook configuration is only available for unofficial WhatsApp inboxes." });
+        if (string.IsNullOrWhiteSpace(inbox.EvolutionInstanceName))
+            return Conflict(new { message = "Inbox has no Evolution instance configured." });
+
+        var webhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        if (webhookUrl is null)
+        {
+            return Conflict(new
+            {
+                message = "NOC public webhook base URL is not configured.",
+                detail = "Set NOC_PUBLIC_BASE_URL to a publicly reachable HTTPS URL and retry."
+            });
+        }
+
+        try
+        {
+            var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
+            var webhookResponse = await evolutionApiClient.SetWebhookAsync(
+                inbox.EvolutionInstanceName,
+                new EvolutionSetWebhookRequest
+                {
+                    Url = webhookUrl,
+                    Events = EvolutionWebhookEvents,
+                    WebhookByEvents = true,
+                    WebhookBase64 = false,
+                },
+                proxyOptions);
+
+            await auditService.LogAsync(
+                "INBOX_EVOLUTION_WEBHOOK_CONFIGURED",
+                entityType: "INBOX",
+                entityId: inbox.Id,
+                payload: new { inbox.EvolutionInstanceName, webhookUrl });
+
+            AppendWebhookSetupPayload(webhookResponse.Payload, inbox, warning: null);
+
+            return Ok(new EvolutionOperationResponse(MapToResponse(inbox), "configure-webhook", webhookResponse.Payload));
+        }
+        catch (EvolutionApiException ex)
+        {
+            logger.LogWarning(ex, "Evolution webhook setup failed for inbox {InboxId}", inbox.Id);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = "Evolution webhook configuration failed.",
+                ex.StatusCode,
+                detail = ex.Message,
             });
         }
     }
@@ -328,7 +404,9 @@ public class InboxController(
     [HttpGet("{id:guid}/status")]
     public async Task<IActionResult> GetEvolutionStatus(Guid id, [FromQuery] bool refresh = true)
     {
-        var inbox = await db.Inboxes.FirstOrDefaultAsync(i => i.Id == id);
+        var inbox = await db.Inboxes
+            .Include(i => i.ProxyOutbound)
+            .FirstOrDefaultAsync(i => i.Id == id);
         if (inbox is null)
             return NotFound(new { message = "Inbox not found" });
         if (inbox.ChannelType != ChannelType.WHATSAPP_UNOFFICIAL)
@@ -345,16 +423,21 @@ public class InboxController(
                 ["status"] = inbox.EvolutionSessionStatus ?? "UNKNOWN",
             };
 
+            AppendWebhookExpectationPayload(payload, inbox);
+
             return Ok(new EvolutionOperationResponse(MapToResponse(inbox), "status", payload));
         }
 
         try
         {
-            var statusResponse = await evolutionApiClient.GetInstanceStatusAsync(inbox.EvolutionInstanceName);
+            var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
+            var statusResponse = await evolutionApiClient.GetInstanceStatusAsync(inbox.EvolutionInstanceName, proxyOptions);
             inbox.EvolutionSessionStatus = statusResponse.Status;
             inbox.EvolutionLastHeartbeat = DateTimeOffset.UtcNow;
             inbox.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync();
+
+            await AppendWebhookDiagnosticsAsync(inbox, statusResponse.Payload);
 
             return Ok(new EvolutionOperationResponse(MapToResponse(inbox), "status", statusResponse.Payload));
         }
@@ -365,7 +448,7 @@ public class InboxController(
             {
                 message = "Evolution status lookup failed.",
                 ex.StatusCode,
-                ex.Message,
+                detail = ex.Message,
             });
         }
     }
@@ -379,21 +462,26 @@ public class InboxController(
 
         try
         {
+            var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
             var createResponse = await evolutionApiClient.CreateInstanceAsync(new EvolutionCreateInstanceRequest
             {
                 InstanceName = inbox.EvolutionInstanceName,
-            });
+            }, proxyOptions);
+
+            var webhookWarning = await TryConfigureEvolutionWebhookAsync(inbox);
 
             JsonObject? connectPayload = null;
             if (autoConnect)
             {
-                var connectResponse = await evolutionApiClient.ConnectInstanceAsync(inbox.EvolutionInstanceName);
+                var connectResponse = await evolutionApiClient.ConnectInstanceAsync(inbox.EvolutionInstanceName, proxyOptions);
                 connectPayload = connectResponse.Payload;
+                AppendWebhookSetupPayload(connectPayload, inbox, webhookWarning);
                 inbox.EvolutionSessionStatus = "QR_PENDING";
             }
             else
             {
                 inbox.EvolutionSessionStatus = "DISCONNECTED";
+                AppendWebhookSetupPayload(createResponse.Payload, inbox, webhookWarning);
             }
 
             inbox.EvolutionLastHeartbeat = DateTimeOffset.UtcNow;
@@ -412,6 +500,172 @@ public class InboxController(
 
             return (false, null, null, ex.Message);
         }
+    }
+
+    private async Task<string?> TryConfigureEvolutionWebhookAsync(Inbox inbox)
+    {
+        if (string.IsNullOrWhiteSpace(inbox.EvolutionInstanceName))
+            return "Inbox has no Evolution instance configured.";
+
+        var webhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        if (webhookUrl is null)
+        {
+            logger.LogWarning(
+                "Skipping Evolution webhook configuration for inbox {InboxId} because NOC_PUBLIC_BASE_URL is not configured.",
+                inbox.Id);
+            return "Inbound webhooks are disabled because NOC_PUBLIC_BASE_URL is not configured with a publicly reachable HTTPS URL.";
+        }
+
+        try
+        {
+            var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
+            await evolutionApiClient.SetWebhookAsync(
+                inbox.EvolutionInstanceName,
+                new EvolutionSetWebhookRequest
+                {
+                    Url = webhookUrl,
+                    Events = EvolutionWebhookEvents,
+                    WebhookByEvents = true,
+                    WebhookBase64 = false,
+                },
+                proxyOptions);
+
+            return null;
+        }
+        catch (EvolutionApiException ex)
+        {
+            logger.LogWarning(ex, "Evolution webhook setup failed for inbox {InboxId}", inbox.Id);
+            return "Evolution webhook configuration failed. Inbound messages will not arrive until the webhook is configured.";
+        }
+    }
+
+    private async Task AppendWebhookDiagnosticsAsync(Inbox inbox, JsonObject payload)
+    {
+        AppendWebhookExpectationPayload(payload, inbox);
+
+        if (string.IsNullOrWhiteSpace(inbox.EvolutionInstanceName))
+        {
+            payload["webhookConfigured"] = false;
+            payload["webhookWarning"] = "Inbox has no Evolution instance configured.";
+            return;
+        }
+
+        var expectedWebhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        if (expectedWebhookUrl is null)
+        {
+            payload["webhookConfigured"] = false;
+            payload["webhookWarning"] = "Inbound webhooks are disabled because NOC_PUBLIC_BASE_URL is not configured with a publicly reachable HTTPS URL.";
+            return;
+        }
+
+        try
+        {
+            var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
+            var webhookResponse = await evolutionApiClient.GetWebhookAsync(inbox.EvolutionInstanceName, proxyOptions);
+
+            payload["webhookConfigured"] = webhookResponse.IsConfigured;
+            payload["webhookUrl"] = webhookResponse.Url;
+            payload["webhookEvents"] = BuildWebhookEventsJson(webhookResponse.Events);
+
+            if (!webhookResponse.IsConfigured)
+            {
+                payload["webhookWarning"] = "Evolution instance has no webhook configured. Run configure-webhook after setting NOC_PUBLIC_BASE_URL.";
+                return;
+            }
+
+            if (!string.Equals(NormalizeWebhookUrl(webhookResponse.Url), NormalizeWebhookUrl(expectedWebhookUrl), StringComparison.OrdinalIgnoreCase))
+                payload["webhookWarning"] = $"Evolution webhook points to '{webhookResponse.Url}' but NOC expects '{expectedWebhookUrl}'.";
+        }
+        catch (EvolutionApiException ex)
+        {
+            logger.LogWarning(ex, "Evolution webhook lookup failed for inbox {InboxId}", inbox.Id);
+            payload["webhookConfigured"] = false;
+            payload["webhookWarning"] = "Evolution webhook status could not be verified.";
+            payload["webhookLookupError"] = ex.Message;
+        }
+    }
+
+    private void AppendWebhookSetupPayload(JsonObject payload, Inbox inbox, string? warning)
+    {
+        AppendWebhookExpectationPayload(payload, inbox);
+
+        var expectedWebhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        payload["webhookConfigured"] = warning is null && expectedWebhookUrl is not null;
+
+        if (!string.IsNullOrWhiteSpace(warning))
+            payload["webhookWarning"] = warning;
+    }
+
+    private void AppendWebhookExpectationPayload(JsonObject payload, Inbox inbox)
+    {
+        var expectedWebhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        payload["webhookExpectedUrl"] = expectedWebhookUrl;
+        payload["webhookEvents"] = BuildWebhookEventsJson(EvolutionWebhookEvents);
+
+        if (expectedWebhookUrl is not null && payload["webhookUrl"] is null)
+            payload["webhookUrl"] = expectedWebhookUrl;
+    }
+
+    private static JsonArray BuildWebhookEventsJson(IEnumerable<string> events)
+    {
+        var json = new JsonArray();
+        foreach (var webhookEvent in events)
+            json.Add(webhookEvent);
+
+        return json;
+    }
+
+    private static string? NormalizeWebhookUrl(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimEnd('/');
+
+    private async Task<EvolutionProxyOptions?> BuildEvolutionProxyOptionsAsync(Inbox inbox)
+    {
+        var proxy = inbox.ProxyOutbound;
+        if (proxy is null && inbox.ProxyOutboundId.HasValue)
+        {
+            proxy = await db.ProxyOutbounds
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == inbox.ProxyOutboundId.Value);
+        }
+
+        if (proxy is null)
+            return null;
+
+        string? password = null;
+        if (!string.IsNullOrWhiteSpace(proxy.EncryptedPassword))
+        {
+            var encryptor = serviceProvider.GetService<AesGcmEncryptor>();
+            if (encryptor is null)
+                throw new InvalidOperationException("Encryption is not configured for proxy credentials.");
+
+            password = encryptor.Decrypt(proxy.EncryptedPassword);
+        }
+
+        return new EvolutionProxyOptions(
+            proxy.Protocol,
+            proxy.Host,
+            proxy.Port,
+            proxy.Username,
+            password);
+    }
+
+    private string? BuildEvolutionWebhookBaseUrl(Inbox inbox)
+    {
+        var configuredBaseUrl =
+            configuration["NOC_PUBLIC_BASE_URL"]
+            ?? configuration["Noc:PublicBaseUrl"];
+
+        if (string.IsNullOrWhiteSpace(configuredBaseUrl))
+            return null;
+
+        if (!Uri.TryCreate(configuredBaseUrl, UriKind.Absolute, out var baseUri))
+        {
+            logger.LogWarning("Ignoring invalid NOC_PUBLIC_BASE_URL value: {ConfiguredBaseUrl}", configuredBaseUrl);
+            return null;
+        }
+
+        var normalizedBase = baseUri.ToString().TrimEnd('/');
+        return $"{normalizedBase}/webhooks/evolution/{inbox.Id}/";
     }
 
     private IActionResult? ApplySecretUpdates(

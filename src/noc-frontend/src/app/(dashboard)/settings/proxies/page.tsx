@@ -57,12 +57,11 @@ export default function ProxiesSettingsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [proxyData, inboxData] = await Promise.all([listProxies(), listInboxes()]);
-      setProxies(proxyData);
-      setInboxes(inboxData);
-    } catch (e: unknown) {
-      const err = e as ApiError;
-      toast.error(err.detail || 'Error al cargar datos');
+      const [proxyResult, inboxData] = await Promise.allSettled([listProxies(), listInboxes()]);
+      setProxies(proxyResult.status === 'fulfilled' ? proxyResult.value : []);
+      setInboxes(inboxData.status === 'fulfilled' ? inboxData.value : []);
+    } catch {
+      // silently handle — individual failures are handled above
     } finally {
       setLoading(false);
     }

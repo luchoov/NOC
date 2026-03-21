@@ -28,8 +28,29 @@ public class EvolutionWebhookController(
     private const string MessagingIncomingStream = "stream:messaging:incoming";
     private const string StatusUpdatesStream = "stream:status:updates";
 
+    [HttpPost]
+    [HttpPost("{eventSlug}")]
+    public async Task<IActionResult> Receive(Guid inboxId, string? eventSlug, [FromBody] JsonElement payload)
+    {
+        var normalizedEvent = NormalizeEventSlug(eventSlug, payload);
+
+        return normalizedEvent switch
+        {
+            "messages-upsert" or "messages-set" => await ReceiveMessageInternal(inboxId, payload),
+            "connection-update" or "qrcode-updated" => await ReceiveStatusInternal(inboxId, payload),
+            _ => Ok(new { status = "ignored", inboxId, eventType = normalizedEvent ?? "unknown" }),
+        };
+    }
+
     [HttpPost("messages")]
     public async Task<IActionResult> ReceiveMessage(Guid inboxId, [FromBody] JsonElement payload)
+        => await ReceiveMessageInternal(inboxId, payload);
+
+    [HttpPost("status")]
+    public async Task<IActionResult> ReceiveStatus(Guid inboxId, [FromBody] JsonElement payload)
+        => await ReceiveStatusInternal(inboxId, payload);
+
+    private async Task<IActionResult> ReceiveMessageInternal(Guid inboxId, JsonElement payload)
     {
         var inbox = await GetValidUnofficialInboxAsync(inboxId);
         if (inbox is null)
@@ -58,8 +79,7 @@ public class EvolutionWebhookController(
         return Ok(new { status = "accepted", inboxId, externalId });
     }
 
-    [HttpPost("status")]
-    public async Task<IActionResult> ReceiveStatus(Guid inboxId, [FromBody] JsonElement payload)
+    private async Task<IActionResult> ReceiveStatusInternal(Guid inboxId, JsonElement payload)
     {
         var inbox = await GetValidUnofficialInboxAsync(inboxId);
         if (inbox is null)
@@ -91,6 +111,30 @@ public class EvolutionWebhookController(
         await db.SaveChangesAsync();
 
         return Ok(new { status = "accepted", inboxId, normalizedStatus });
+    }
+
+    private static string? NormalizeEventSlug(string? routeEventSlug, JsonElement payload)
+    {
+        if (!string.IsNullOrWhiteSpace(routeEventSlug))
+            return NormalizeSlug(routeEventSlug);
+
+        var payloadEvent =
+            TryGetPath(payload, "event")
+            ?? TryGetPath(payload, "eventType");
+
+        return NormalizeSlug(payloadEvent);
+    }
+
+    private static string? NormalizeSlug(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return raw
+            .Trim()
+            .Replace('_', '-')
+            .Replace('.', '-')
+            .ToLowerInvariant();
     }
 
     private async Task<Inbox?> GetValidUnofficialInboxAsync(Guid inboxId)

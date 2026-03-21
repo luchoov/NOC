@@ -4,6 +4,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using NOC.Shared.Domain.Enums;
 
 namespace NOC.Shared.Infrastructure.Evolution;
 
@@ -34,7 +35,72 @@ public sealed record EvolutionSendMessageRequest
     public IDictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
 
+public sealed record EvolutionFindContactsRequest
+{
+    [JsonPropertyName("where")]
+    public EvolutionFindContactsWhere? Where { get; init; }
+}
+
+public sealed record EvolutionFindContactsWhere
+{
+    [JsonPropertyName("id")]
+    public string? Id { get; init; }
+}
+
+public sealed record EvolutionProxyOptions(
+    ProxyProtocol Protocol,
+    string Host,
+    int Port,
+    string? Username = null,
+    string? Password = null);
+
+public sealed record EvolutionSetWebhookRequest
+{
+    [JsonPropertyName("url")]
+    public required string Url { get; init; }
+
+    [JsonPropertyName("events")]
+    public required IReadOnlyList<string> Events { get; init; }
+
+    [JsonPropertyName("webhook_by_events")]
+    public bool WebhookByEvents { get; init; } = true;
+
+    [JsonPropertyName("webhook_base64")]
+    public bool WebhookBase64 { get; init; } = false;
+}
+
+public sealed record EvolutionSetWebhookCompatRequest
+{
+    [JsonPropertyName("webhook")]
+    public required EvolutionSetWebhookCompatPayload Webhook { get; init; }
+}
+
+public sealed record EvolutionSetWebhookCompatPayload
+{
+    [JsonPropertyName("url")]
+    public required string Url { get; init; }
+
+    [JsonPropertyName("events")]
+    public required IReadOnlyList<string> Events { get; init; }
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; } = true;
+
+    [JsonPropertyName("webhook_by_events")]
+    public bool WebhookByEvents { get; init; } = true;
+
+    [JsonPropertyName("webhook_base64")]
+    public bool WebhookBase64 { get; init; } = false;
+}
+
 public sealed record EvolutionApiResponse(JsonObject Payload);
+
+public sealed record EvolutionWebhookConfigurationResponse(
+    string InstanceName,
+    bool IsConfigured,
+    string? Url,
+    IReadOnlyList<string> Events,
+    JsonObject Payload);
 
 public sealed record EvolutionInstanceStatusResponse(
     string InstanceName,

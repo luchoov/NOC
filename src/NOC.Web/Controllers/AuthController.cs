@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NOC.Shared.Infrastructure.Data;
 using NOC.Web.Auth;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace NOC.Web.Controllers;
 
@@ -19,7 +21,14 @@ public class AuthController(NocDbContext db, TokenService tokenService, ILogger<
     {
         var agent = await db.Agents.FirstOrDefaultAsync(a => a.Email == request.Email);
 
-        if (agent is null || !BCrypt.Net.BCrypt.EnhancedVerify(request.Password, agent.PasswordHash))
+        if (agent is null)
+        {
+            logger.LogWarning("Failed login attempt for {Email}", request.Email);
+            return Unauthorized(new { message = "Invalid credentials" });
+        }
+
+        var passwordVerified = TryVerifyPassword(request.Password, agent.PasswordHash, out var shouldUpgradeHash);
+        if (!passwordVerified)
         {
             logger.LogWarning("Failed login attempt for {Email}", request.Email);
             return Unauthorized(new { message = "Invalid credentials" });
@@ -28,6 +37,14 @@ public class AuthController(NocDbContext db, TokenService tokenService, ILogger<
         if (!agent.IsActive)
         {
             return Unauthorized(new { message = "Account is disabled" });
+        }
+
+        if (shouldUpgradeHash)
+        {
+            agent.PasswordHash = BCrypt.Net.BCrypt.EnhancedHashPassword(request.Password);
+            agent.PasswordVersion++;
+            agent.PasswordUpdatedAt = DateTimeOffset.UtcNow;
+            agent.UpdatedAt = DateTimeOffset.UtcNow;
         }
 
         var (accessToken, expiresAt) = tokenService.GenerateAccessToken(agent);
@@ -42,6 +59,55 @@ public class AuthController(NocDbContext db, TokenService tokenService, ILogger<
         logger.LogInformation("Agent {AgentId} logged in", agent.Id);
 
         return Ok(new LoginResponse(accessToken, refreshToken, expiresAt));
+    }
+
+    private bool TryVerifyPassword(string password, string passwordHash, out bool shouldUpgradeHash)
+    {
+        shouldUpgradeHash = false;
+
+        if (string.IsNullOrWhiteSpace(passwordHash))
+            return false;
+
+        if (TryVerifyWith(() => BCrypt.Net.BCrypt.EnhancedVerify(password, passwordHash)))
+            return true;
+
+        if (TryVerifyWith(() => BCrypt.Net.BCrypt.Verify(password, passwordHash)))
+        {
+            shouldUpgradeHash = true;
+            return true;
+        }
+
+        var sha384Base64 = Convert.ToBase64String(SHA384.HashData(Encoding.UTF8.GetBytes(password)));
+        if (TryVerifyWith(() => BCrypt.Net.BCrypt.Verify(sha384Base64, passwordHash)))
+        {
+            shouldUpgradeHash = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryVerifyWith(Func<bool> verify)
+    {
+        try
+        {
+            return verify();
+        }
+        catch (BCrypt.Net.SaltParseException ex)
+        {
+            logger.LogWarning(ex, "Skipping incompatible password hash format.");
+            return false;
+        }
+        catch (BCrypt.Net.HashInformationException ex)
+        {
+            logger.LogWarning(ex, "Skipping invalid password hash metadata.");
+            return false;
+        }
+        catch (ArgumentException ex)
+        {
+            logger.LogWarning(ex, "Skipping malformed password hash.");
+            return false;
+        }
     }
 
     [HttpPost("refresh")]

@@ -18,14 +18,11 @@ function buildConnection(): signalR.HubConnection {
       nextRetryDelayInMilliseconds: (ctx) =>
         Math.min(1000 * Math.pow(2, ctx.previousRetryCount), 30_000),
     })
-    .configureLogging(signalR.LogLevel.Warning)
+    .configureLogging(signalR.LogLevel.None)
     .build();
 }
 
-export function getConnection(): signalR.HubConnection {
-  if (!connection) {
-    connection = buildConnection();
-  }
+export function getConnection(): signalR.HubConnection | null {
   return connection;
 }
 
@@ -39,7 +36,13 @@ export async function startHub(): Promise<void> {
     }
   }
   connection = buildConnection();
-  await connection.start();
+  try {
+    await connection.start();
+  } catch {
+    // Hub may not be available yet — app works without real-time updates
+    console.warn('[SignalR] Hub not available, real-time updates disabled');
+    connection = null;
+  }
 }
 
 export async function stopHub(): Promise<void> {
@@ -53,7 +56,7 @@ export async function stopHub(): Promise<void> {
   }
 }
 
-export const joinInbox = (id: string) => getConnection().invoke('JoinInbox', id);
-export const leaveInbox = (id: string) => getConnection().invoke('LeaveInbox', id);
-export const joinConversation = (id: string) => getConnection().invoke('JoinConversation', id);
-export const leaveConversation = (id: string) => getConnection().invoke('LeaveConversation', id);
+export const joinInbox = (id: string) => getConnection()?.invoke('JoinInbox', id) ?? Promise.resolve();
+export const leaveInbox = (id: string) => getConnection()?.invoke('LeaveInbox', id) ?? Promise.resolve();
+export const joinConversation = (id: string) => getConnection()?.invoke('JoinConversation', id) ?? Promise.resolve();
+export const leaveConversation = (id: string) => getConnection()?.invoke('LeaveConversation', id) ?? Promise.resolve();
