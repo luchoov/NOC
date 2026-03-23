@@ -76,9 +76,13 @@ export function MessageInput({ conversationId, onSent }: MessageInputProps) {
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+      // Prefer ogg/opus — WhatsApp treats webm as video and won't deliver it as audio
+      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+      const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
       const recorder = new MediaRecorder(stream, { mimeType });
       const chunks: Blob[] = [];
 
@@ -92,7 +96,7 @@ export function MessageInput({ conversationId, onSent }: MessageInputProps) {
         setRecordingTime(0);
 
         const blob = new Blob(chunks, { type: mimeType });
-        const audioFile = new File([blob], `audio-${Date.now()}.webm`, { type: mimeType });
+        const audioFile = new File([blob], `audio-${Date.now()}.${ext}`, { type: mimeType });
         setFile(audioFile);
         setFilePreview(null);
         setRecording(false);

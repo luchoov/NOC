@@ -25,6 +25,7 @@ public sealed class EvolutionApiClient(
     private const string StatusEndpointTemplate = "instance/connectionState/{0}";
     private const string DownloadMediaEndpointTemplate = "chat/getBase64FromMediaMessage/{0}";
     private const string SendMediaEndpointTemplate = "message/sendMedia/{0}";
+    private const string SendWhatsAppAudioEndpointTemplate = "message/sendWhatsAppAudio/{0}";
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
@@ -192,6 +193,21 @@ public sealed class EvolutionApiClient(
 
         var encodedName = Uri.EscapeDataString(instanceName);
         var endpoint = string.Format(SendMediaEndpointTemplate, encodedName);
+        var payload = await SendAsync(HttpMethod.Post, endpoint, request, proxy, cancellationToken);
+        return new EvolutionApiResponse(payload);
+    }
+
+    public async Task<EvolutionApiResponse> SendWhatsAppAudioAsync(
+        string instanceName,
+        EvolutionSendWhatsAppAudioRequest request,
+        EvolutionProxyOptions? proxy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceName);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var encodedName = Uri.EscapeDataString(instanceName);
+        var endpoint = string.Format(SendWhatsAppAudioEndpointTemplate, encodedName);
         var payload = await SendAsync(HttpMethod.Post, endpoint, request, proxy, cancellationToken);
         return new EvolutionApiResponse(payload);
     }

@@ -134,6 +134,15 @@ public sealed record EvolutionSendMediaRequest
     public string? FileName { get; init; }
 }
 
+public sealed record EvolutionSendWhatsAppAudioRequest
+{
+    [JsonPropertyName("number")]
+    public required string Number { get; init; }
+
+    [JsonPropertyName("audio")]
+    public required string Audio { get; init; } // base64 encoded audio
+}
+
 public sealed record EvolutionInstanceStatusResponse(
     string InstanceName,
     string Status,

@@ -54,5 +54,11 @@ public interface IEvolutionApiClient
         EvolutionSendMediaRequest request,
         EvolutionProxyOptions? proxy = null,
         CancellationToken cancellationToken = default);
+
+    Task<EvolutionApiResponse> SendWhatsAppAudioAsync(
+        string instanceName,
+        EvolutionSendWhatsAppAudioRequest request,
+        EvolutionProxyOptions? proxy = null,
+        CancellationToken cancellationToken = default);
 }
 

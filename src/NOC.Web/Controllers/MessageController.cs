@@ -310,26 +310,44 @@ LIMIT {limit}")
             if (!string.IsNullOrWhiteSpace(recipientResolution.FailureMessage))
                 return Conflict(new { message = recipientResolution.FailureMessage });
 
-            var evolutionMediaType = messageType switch
-            {
-                MessageType.IMAGE => "image",
-                MessageType.VIDEO => "video",
-                MessageType.AUDIO => "audio",
-                _ => "document",
-            };
+            EvolutionApiResponse evolutionResponse;
 
-            var evolutionResponse = await evolutionApiClient.SendMediaMessageAsync(
-                conversation.Inbox.EvolutionInstanceName,
-                new EvolutionSendMediaRequest
+            if (messageType == MessageType.AUDIO)
+            {
+                // Use sendWhatsAppAudio for voice messages (PTT) — sendMedia treats
+                // webm/ogg as video and WhatsApp won't deliver them as audio.
+                evolutionResponse = await evolutionApiClient.SendWhatsAppAudioAsync(
+                    conversation.Inbox.EvolutionInstanceName,
+                    new EvolutionSendWhatsAppAudioRequest
+                    {
+                        Number = recipientResolution.Number,
+                        Audio = base64Media,
+                    },
+                    proxyOptions,
+                    cancellationToken);
+            }
+            else
+            {
+                var evolutionMediaType = messageType switch
                 {
-                    Number = recipientResolution.Number,
-                    MediaType = evolutionMediaType,
-                    Media = base64Media,
-                    Caption = caption,
-                    FileName = fileName,
-                },
-                proxyOptions,
-                cancellationToken);
+                    MessageType.IMAGE => "image",
+                    MessageType.VIDEO => "video",
+                    _ => "document",
+                };
+
+                evolutionResponse = await evolutionApiClient.SendMediaMessageAsync(
+                    conversation.Inbox.EvolutionInstanceName,
+                    new EvolutionSendMediaRequest
+                    {
+                        Number = recipientResolution.Number,
+                        MediaType = evolutionMediaType,
+                        Media = base64Media,
+                        Caption = caption,
+                        FileName = fileName,
+                    },
+                    proxyOptions,
+                    cancellationToken);
+            }
 
             var message = new Message
             {
