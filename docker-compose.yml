@@ -31,6 +31,9 @@ services:
       dockerfile: src/NOC.Web/Dockerfile
     ports:
       - "${NOC_WEB_PORT:-8080}:8080"
+    networks:
+      - default
+      - dokploy-network
     environment:
       ConnectionStrings__Postgres: "Host=${POSTGRES_HOST};Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       ConnectionStrings__Redis: "redis:6379"
@@ -66,6 +69,9 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.Messaging/Dockerfile
+    networks:
+      - default
+      - dokploy-network
     environment:
       ConnectionStrings__Postgres: "Host=${POSTGRES_HOST};Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       ConnectionStrings__Redis: "redis:6379"
@@ -90,6 +96,9 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.Campaigns/Dockerfile
+    networks:
+      - default
+      - dokploy-network
     environment:
       ConnectionStrings__Postgres: "Host=${POSTGRES_HOST};Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       ConnectionStrings__Redis: "redis:6379"
@@ -109,6 +118,9 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.Notifications/Dockerfile
+    networks:
+      - default
+      - dokploy-network
     environment:
       ConnectionStrings__Postgres: "Host=${POSTGRES_HOST};Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       ConnectionStrings__Redis: "redis:6379"
@@ -139,6 +151,10 @@ services:
     depends_on:
       noc-web:
         condition: service_healthy
+
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   redisdata:
