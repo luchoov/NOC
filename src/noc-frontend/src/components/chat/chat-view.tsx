@@ -10,6 +10,7 @@ import { useConversationUpdates } from '@/lib/signalr/hooks';
 import type { ConversationResponse, MessageResponse } from '@/types/api';
 import { ChatHeader } from './chat-header';
 import { MessageBubble } from './message-bubble';
+import { MessageErrorBoundary } from './message-error-boundary';
 import { MessageInput } from './message-input';
 import { DateSeparator } from './date-separator';
 
@@ -191,7 +192,9 @@ export function ChatView({ conversation, onToggleContactPanel, onConversationUpd
               return (
                 <div key={msg.id}>
                   {showDate && <DateSeparator date={msg.createdAt} />}
-                  <MessageBubble message={msg} />
+                  <MessageErrorBoundary>
+                    <MessageBubble message={msg} />
+                  </MessageErrorBoundary>
                 </div>
               );
             })}

@@ -98,23 +98,30 @@ export function AuthAudio({ apiPath, mimeType, isOutbound }: AuthAudioProps) {
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !url) return;
+
+    // When the blob URL changes, force the audio element to reload
+    audio.src = url;
+    audio.load();
 
     const onTimeUpdate = () => setCurrentTime(audio.currentTime);
     const onLoadedMetadata = () => { setDuration(audio.duration); setLoaded(true); };
     const onEnded = () => { setPlaying(false); setCurrentTime(0); };
     const onDurationChange = () => { if (audio.duration && isFinite(audio.duration)) setDuration(audio.duration); };
+    const onError = () => { console.warn('[AuthAudio] audio load error', audio.error); };
 
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('durationchange', onDurationChange);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
 
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('durationchange', onDurationChange);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
     };
   }, [url]);
 
@@ -129,8 +136,7 @@ export function AuthAudio({ apiPath, mimeType, isOutbound }: AuthAudioProps) {
       audio.pause();
       setPlaying(false);
     } else {
-      audio.play();
-      setPlaying(true);
+      audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
     }
   }
 
@@ -145,9 +151,8 @@ export function AuthAudio({ apiPath, mimeType, isOutbound }: AuthAudioProps) {
 
   return (
     <div className="flex items-center gap-2.5 min-w-[220px] max-w-[280px]">
-      <audio ref={audioRef} src={url} preload="metadata">
-        <source type={mimeType ?? 'audio/ogg'} />
-      </audio>
+      {/* src is set imperatively in useEffect so .load() is called on url change */}
+      <audio ref={audioRef} preload="metadata" />
 
       {/* Play/Pause button */}
       <button
