@@ -45,6 +45,11 @@ services:
       - dokploy-network
     environment:
       ConnectionStrings__Postgres: "Host=${POSTGRES_HOST};Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      PGHOST: ${POSTGRES_HOST}
+      PGPORT: ${POSTGRES_PORT:-5432}
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
 
   noc-web:
     build:
