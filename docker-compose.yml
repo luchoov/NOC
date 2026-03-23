@@ -1,8 +1,15 @@
+x-json-file-logging: &json-file-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
 
   redis:
     image: redis:8-alpine
     command: redis-server --appendonly yes --appendfsync everysec
+    logging: *json-file-logging
     volumes:
       - redisdata:/data
     healthcheck:
@@ -14,6 +21,7 @@ services:
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
+    logging: *json-file-logging
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -25,12 +33,27 @@ services:
       timeout: 5s
       retries: 5
 
+  noc-migrate:
+    build:
+      context: .
+      dockerfile: src/NOC.Web/Dockerfile
+      target: migrate
+    restart: "no"
+    logging: *json-file-logging
+    networks:
+      - default
+      - dokploy-network
+    environment:
+      ConnectionStrings__Postgres: "Host=${POSTGRES_HOST};Port=${POSTGRES_PORT:-5432};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+
   noc-web:
     build:
       context: .
       dockerfile: src/NOC.Web/Dockerfile
+      target: final
     ports:
       - "${NOC_WEB_PORT:-8080}:8080"
+    logging: *json-file-logging
     networks:
       - default
       - dokploy-network
@@ -54,6 +77,8 @@ services:
       NOC_PUBLIC_BASE_URL: ${NOC_PUBLIC_BASE_URL:-}
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
     depends_on:
+      noc-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -69,6 +94,7 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.Messaging/Dockerfile
+    logging: *json-file-logging
     networks:
       - default
       - dokploy-network
@@ -87,6 +113,8 @@ services:
       EVOLUTION_API_URL: ${EVOLUTION_API_URL}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
     depends_on:
+      noc-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -96,6 +124,7 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.Campaigns/Dockerfile
+    logging: *json-file-logging
     networks:
       - default
       - dokploy-network
@@ -111,6 +140,8 @@ services:
       EVOLUTION_API_URL: ${EVOLUTION_API_URL}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
     depends_on:
+      noc-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -118,6 +149,7 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.Notifications/Dockerfile
+    logging: *json-file-logging
     networks:
       - default
       - dokploy-network
@@ -127,6 +159,8 @@ services:
       Alerts__SlackWebhookUrl: ${SLACK_WEBHOOK_URL:-}
       Alerts__AdminEmail: ${ADMIN_EMAIL:-}
     depends_on:
+      noc-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -134,6 +168,7 @@ services:
     build:
       context: .
       dockerfile: src/NOC.Worker.AI/Dockerfile
+    logging: *json-file-logging
     environment:
       ConnectionStrings__Redis: "redis:6379"
     depends_on:
@@ -146,6 +181,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-3001}:3000"
+    logging: *json-file-logging
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://noc-web:8080}
     depends_on:

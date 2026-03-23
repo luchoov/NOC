@@ -19,6 +19,11 @@ COPY src/NOC.Shared/ src/NOC.Shared/
 COPY src/NOC.Web/ src/NOC.Web/
 RUN dotnet publish src/NOC.Web/NOC.Web.csproj -c Release -o /app/publish --no-restore
 
+FROM build AS migrate
+ENV PATH="${PATH}:/root/.dotnet/tools"
+RUN dotnet tool install --global dotnet-ef --version 10.0.5
+ENTRYPOINT ["dotnet", "ef", "database", "update", "--project", "src/NOC.Web/NOC.Web.csproj", "--startup-project", "src/NOC.Web/NOC.Web.csproj", "--configuration", "Release", "--no-build"]
+
 FROM base AS final
 WORKDIR /app
 COPY --from=build /app/publish .
