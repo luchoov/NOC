@@ -102,6 +102,11 @@ export interface ConversationResponse {
   updatedAt: string;
 }
 
+export interface CreateConversationRequest {
+  contactId: string;
+  inboxId: string;
+}
+
 export interface AssignConversationRequest {
   agentId: string;
   expectedRowVersion: number;

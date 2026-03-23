@@ -12,6 +12,10 @@ public sealed record UpdateConversationStatusRequest(
     int ExpectedRowVersion,
     DateTimeOffset? SnoozedUntil = null);
 
+public sealed record CreateConversationRequest(
+    Guid ContactId,
+    Guid InboxId);
+
 public sealed record ConversationResponse(
     Guid Id,
     Guid InboxId,

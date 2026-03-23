@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Inbox, Loader2, Filter, ChevronDown } from 'lucide-react';
+import { Inbox, Loader2, Filter, ChevronDown, Plus } from 'lucide-react';
 import { listConversations, getConversation, markConversationRead } from '@/lib/api/conversations';
 import { listInboxes } from '@/lib/api/inboxes';
 import { useUIStore } from '@/lib/store/ui.store';
@@ -14,6 +14,7 @@ import type { ConversationResponse, InboxResponse, ConversationStatus } from '@/
 import { ConversationListItem } from '@/components/inbox/conversation-list-item';
 import { ChatView } from '@/components/chat/chat-view';
 import { ContactPanel } from '@/components/inbox/contact-panel';
+import { NewConversationModal } from '@/components/inbox/new-conversation-modal';
 import { CONVERSATION_STATUS } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils';
 
@@ -37,6 +38,7 @@ export default function InboxPage() {
   const [contactPanelOpen, setContactPanelOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [inboxDropdownOpen, setInboxDropdownOpen] = useState(false);
+  const [newConvOpen, setNewConvOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const fetchRef = useRef(0);
 
@@ -224,7 +226,14 @@ export default function InboxPage() {
                 {f === 'all' ? 'Todas' : f === 'mine' ? 'Mías' : 'Sin asignar'}
               </button>
             ))}
-            <div className="relative ml-auto">
+            <div className="relative ml-auto flex gap-1">
+              <button
+                onClick={() => setNewConvOpen(true)}
+                title="Nueva conversacion"
+                className="grid h-6 w-6 place-items-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
               <button
                 onClick={() => setFilterOpen(!filterOpen)}
                 className={cn(
@@ -304,6 +313,23 @@ export default function InboxPage() {
       {/* Right: contact panel */}
       {contactPanelOpen && selectedConversation && (
         <ContactPanel conversation={selectedConversation} onClose={() => setContactPanelOpen(false)} />
+      )}
+
+      {/* New conversation modal */}
+      {newConvOpen && (
+        <NewConversationModal
+          inboxes={inboxes}
+          selectedInboxId={selectedInboxId}
+          onCreated={(conv) => {
+            setNewConvOpen(false);
+            setConversations((prev) => {
+              if (prev.some((c) => c.id === conv.id)) return prev;
+              return [conv, ...prev];
+            });
+            selectConversation(conv.id);
+          }}
+          onClose={() => setNewConvOpen(false)}
+        />
       )}
     </div>
   );

@@ -4,10 +4,15 @@
 import { api, qs } from './client';
 import type {
   ConversationResponse,
+  CreateConversationRequest,
   ListConversationsParams,
   AssignConversationRequest,
   UpdateConversationStatusRequest,
 } from '@/types/api';
+
+export function createConversation(data: CreateConversationRequest) {
+  return api.post<ConversationResponse>('/api/conversations', data);
+}
 
 export function listConversations(params: ListConversationsParams) {
   return api.get<ConversationResponse[]>(`/api/conversations${qs(params)}`);

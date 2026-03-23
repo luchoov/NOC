@@ -74,6 +74,60 @@ public class ConversationController(NocDbContext db, AuditService auditService) 
         return Ok(conversations.Select(MapToResponse));
     }
 
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CreateConversationRequest request)
+    {
+        var contact = await db.Contacts.FirstOrDefaultAsync(c => c.Id == request.ContactId);
+        if (contact is null)
+            return NotFound(new { message = "Contact not found." });
+
+        var inbox = await db.Inboxes.FirstOrDefaultAsync(i => i.Id == request.InboxId && i.IsActive);
+        if (inbox is null)
+            return NotFound(new { message = "Inbox not found or inactive." });
+        if (!await HasInboxAccessAsync(request.InboxId))
+            return Forbid();
+
+        // Check for existing active conversation for this contact+inbox
+        var existing = await db.Conversations
+            .Include(c => c.Contact)
+            .FirstOrDefaultAsync(c =>
+                c.ContactId == request.ContactId &&
+                c.InboxId == request.InboxId &&
+                c.Status != ConversationStatus.RESOLVED &&
+                c.Status != ConversationStatus.ARCHIVED);
+
+        if (existing is not null)
+            return Ok(MapToResponse(existing));
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = new Conversation
+        {
+            Id = Guid.CreateVersion7(),
+            InboxId = request.InboxId,
+            ContactId = request.ContactId,
+            Status = ConversationStatus.OPEN,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        db.Conversations.Add(conversation);
+        await db.SaveChangesAsync();
+
+        // Reload with Contact nav property
+        conversation = await db.Conversations
+            .AsNoTracking()
+            .Include(c => c.Contact)
+            .FirstAsync(c => c.Id == conversation.Id);
+
+        await auditService.LogAsync(
+            "CONVERSATION_CREATED",
+            entityType: "CONVERSATION",
+            entityId: conversation.Id,
+            payload: new { conversation.ContactId, conversation.InboxId, source = "manual" });
+
+        return Created($"/api/conversations/{conversation.Id}", MapToResponse(conversation));
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id)
     {
