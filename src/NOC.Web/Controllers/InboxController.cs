@@ -1,10 +1,13 @@
 // Copyright (c) Neuryn Software
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NOC.Shared.Domain.Entities;
@@ -28,6 +31,10 @@ public class InboxController(
     IConfiguration configuration,
     ILogger<InboxController> logger) : ControllerBase
 {
+    private const string EvolutionWebhookTokenQueryKey = "token";
+    private const string EvolutionWebhookConfigHelp =
+        "Set NOC_PUBLIC_BASE_URL to a publicly reachable HTTPS URL and NOC_EVOLUTION_WEBHOOK_SECRET to a strong secret, then retry.";
+
     private static readonly string[] EvolutionWebhookEvents =
     [
         "MESSAGES_UPSERT",
@@ -355,13 +362,14 @@ public class InboxController(
         if (string.IsNullOrWhiteSpace(inbox.EvolutionInstanceName))
             return Conflict(new { message = "Inbox has no Evolution instance configured." });
 
-        var webhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        var webhookConfigurationIssue = GetEvolutionWebhookConfigurationIssue();
+        var webhookUrl = BuildEvolutionWebhookRegistrationUrl(inbox);
         if (webhookUrl is null)
         {
             return Conflict(new
             {
-                message = "NOC public webhook base URL is not configured.",
-                detail = "Set NOC_PUBLIC_BASE_URL to a publicly reachable HTTPS URL and retry."
+                message = webhookConfigurationIssue ?? "Evolution webhook configuration is incomplete.",
+                detail = EvolutionWebhookConfigHelp,
             });
         }
 
@@ -383,7 +391,7 @@ public class InboxController(
                 "INBOX_EVOLUTION_WEBHOOK_CONFIGURED",
                 entityType: "INBOX",
                 entityId: inbox.Id,
-                payload: new { inbox.EvolutionInstanceName, webhookUrl });
+                payload: new { inbox.EvolutionInstanceName, webhookExpectedUrl = BuildEvolutionWebhookPublicUrl(inbox) });
 
             AppendWebhookSetupPayload(webhookResponse.Payload, inbox, warning: null);
 
@@ -507,13 +515,15 @@ public class InboxController(
         if (string.IsNullOrWhiteSpace(inbox.EvolutionInstanceName))
             return "Inbox has no Evolution instance configured.";
 
-        var webhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        var webhookUrl = BuildEvolutionWebhookRegistrationUrl(inbox);
         if (webhookUrl is null)
         {
+            var issue = GetEvolutionWebhookConfigurationIssue() ?? "Evolution webhook configuration is incomplete.";
             logger.LogWarning(
-                "Skipping Evolution webhook configuration for inbox {InboxId} because NOC_PUBLIC_BASE_URL is not configured.",
-                inbox.Id);
-            return "Inbound webhooks are disabled because NOC_PUBLIC_BASE_URL is not configured with a publicly reachable HTTPS URL.";
+                "Skipping Evolution webhook configuration for inbox {InboxId}: {Issue}",
+                inbox.Id,
+                issue);
+            return $"Inbound webhooks are disabled because {issue} {EvolutionWebhookConfigHelp}";
         }
 
         try
@@ -550,11 +560,14 @@ public class InboxController(
             return;
         }
 
-        var expectedWebhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
-        if (expectedWebhookUrl is null)
+        var expectedWebhookUrl = BuildEvolutionWebhookPublicUrl(inbox);
+        var webhookConfigurationIssue = GetEvolutionWebhookConfigurationIssue();
+        if (expectedWebhookUrl is null || !string.IsNullOrWhiteSpace(webhookConfigurationIssue))
         {
             payload["webhookConfigured"] = false;
-            payload["webhookWarning"] = "Inbound webhooks are disabled because NOC_PUBLIC_BASE_URL is not configured with a publicly reachable HTTPS URL.";
+            payload["webhookWarning"] = webhookConfigurationIssue is null
+                ? "Inbound webhooks are disabled because NOC_PUBLIC_BASE_URL is not configured with a publicly reachable HTTPS URL."
+                : $"Inbound webhooks are disabled because {webhookConfigurationIssue} {EvolutionWebhookConfigHelp}";
             return;
         }
 
@@ -562,19 +575,30 @@ public class InboxController(
         {
             var proxyOptions = await BuildEvolutionProxyOptionsAsync(inbox);
             var webhookResponse = await evolutionApiClient.GetWebhookAsync(inbox.EvolutionInstanceName, proxyOptions);
+            var sanitizedWebhookUrl = SanitizeWebhookUrl(webhookResponse.Url);
+            var normalizedActualUrl = NormalizeWebhookUrl(sanitizedWebhookUrl);
+            var normalizedExpectedUrl = NormalizeWebhookUrl(expectedWebhookUrl);
+            var tokenMatches = HasExpectedWebhookToken(webhookResponse.Url);
+            var urlMatches = string.Equals(normalizedActualUrl, normalizedExpectedUrl, StringComparison.OrdinalIgnoreCase);
 
-            payload["webhookConfigured"] = webhookResponse.IsConfigured;
-            payload["webhookUrl"] = webhookResponse.Url;
+            payload["webhookConfigured"] = webhookResponse.IsConfigured && urlMatches && tokenMatches;
+            payload["webhookUrl"] = sanitizedWebhookUrl;
             payload["webhookEvents"] = BuildWebhookEventsJson(webhookResponse.Events);
 
             if (!webhookResponse.IsConfigured)
             {
-                payload["webhookWarning"] = "Evolution instance has no webhook configured. Run configure-webhook after setting NOC_PUBLIC_BASE_URL.";
+                payload["webhookWarning"] = "Evolution instance has no webhook configured. Run configure-webhook after setting the public webhook URL and secret.";
                 return;
             }
 
-            if (!string.Equals(NormalizeWebhookUrl(webhookResponse.Url), NormalizeWebhookUrl(expectedWebhookUrl), StringComparison.OrdinalIgnoreCase))
-                payload["webhookWarning"] = $"Evolution webhook points to '{webhookResponse.Url}' but NOC expects '{expectedWebhookUrl}'.";
+            if (!urlMatches)
+            {
+                payload["webhookWarning"] = $"Evolution webhook points to '{sanitizedWebhookUrl}' but NOC expects '{expectedWebhookUrl}'.";
+                return;
+            }
+
+            if (!tokenMatches)
+                payload["webhookWarning"] = "Evolution webhook token is missing or does not match NOC_EVOLUTION_WEBHOOK_SECRET.";
         }
         catch (EvolutionApiException ex)
         {
@@ -589,8 +613,7 @@ public class InboxController(
     {
         AppendWebhookExpectationPayload(payload, inbox);
 
-        var expectedWebhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
-        payload["webhookConfigured"] = warning is null && expectedWebhookUrl is not null;
+        payload["webhookConfigured"] = warning is null && BuildEvolutionWebhookRegistrationUrl(inbox) is not null;
 
         if (!string.IsNullOrWhiteSpace(warning))
             payload["webhookWarning"] = warning;
@@ -598,9 +621,12 @@ public class InboxController(
 
     private void AppendWebhookExpectationPayload(JsonObject payload, Inbox inbox)
     {
-        var expectedWebhookUrl = BuildEvolutionWebhookBaseUrl(inbox);
+        var expectedWebhookUrl = BuildEvolutionWebhookPublicUrl(inbox);
         payload["webhookExpectedUrl"] = expectedWebhookUrl;
         payload["webhookEvents"] = BuildWebhookEventsJson(EvolutionWebhookEvents);
+        payload["webhookAuthMode"] = string.IsNullOrWhiteSpace(TryGetEvolutionWebhookSecret())
+            ? "UNCONFIGURED"
+            : "QUERY_TOKEN";
 
         if (expectedWebhookUrl is not null && payload["webhookUrl"] is null)
             payload["webhookUrl"] = expectedWebhookUrl;
@@ -649,11 +675,9 @@ public class InboxController(
             password);
     }
 
-    private string? BuildEvolutionWebhookBaseUrl(Inbox inbox)
+    private string? BuildEvolutionWebhookPublicUrl(Inbox inbox)
     {
-        var configuredBaseUrl =
-            configuration["NOC_PUBLIC_BASE_URL"]
-            ?? configuration["Noc:PublicBaseUrl"];
+        var configuredBaseUrl = GetConfiguredPublicBaseUrl();
 
         if (string.IsNullOrWhiteSpace(configuredBaseUrl))
             return null;
@@ -666,6 +690,73 @@ public class InboxController(
 
         var normalizedBase = baseUri.ToString().TrimEnd('/');
         return $"{normalizedBase}/webhooks/evolution/{inbox.Id}/";
+    }
+
+    private string? BuildEvolutionWebhookRegistrationUrl(Inbox inbox)
+    {
+        var publicWebhookUrl = BuildEvolutionWebhookPublicUrl(inbox);
+        var webhookSecret = TryGetEvolutionWebhookSecret();
+
+        if (publicWebhookUrl is null || string.IsNullOrWhiteSpace(webhookSecret))
+            return null;
+
+        return $"{publicWebhookUrl}?{EvolutionWebhookTokenQueryKey}={Uri.EscapeDataString(webhookSecret)}";
+    }
+
+    private string? GetEvolutionWebhookConfigurationIssue()
+    {
+        var configuredBaseUrl = GetConfiguredPublicBaseUrl();
+        if (string.IsNullOrWhiteSpace(configuredBaseUrl))
+            return "NOC public webhook base URL is not configured.";
+
+        if (!Uri.TryCreate(configuredBaseUrl, UriKind.Absolute, out _))
+            return "NOC public webhook base URL is invalid.";
+
+        if (string.IsNullOrWhiteSpace(TryGetEvolutionWebhookSecret()))
+            return "Evolution webhook secret is not configured.";
+
+        return null;
+    }
+
+    private string? GetConfiguredPublicBaseUrl()
+        => configuration["NOC_PUBLIC_BASE_URL"] ?? configuration["Noc:PublicBaseUrl"];
+
+    private string? TryGetEvolutionWebhookSecret()
+        => configuration["NOC_EVOLUTION_WEBHOOK_SECRET"] ?? configuration["Noc:EvolutionWebhookSecret"];
+
+    private bool HasExpectedWebhookToken(string? rawWebhookUrl)
+    {
+        var expectedSecret = TryGetEvolutionWebhookSecret();
+        if (string.IsNullOrWhiteSpace(expectedSecret) || string.IsNullOrWhiteSpace(rawWebhookUrl))
+            return false;
+
+        if (!Uri.TryCreate(rawWebhookUrl, UriKind.Absolute, out var webhookUri))
+            return false;
+
+        var query = QueryHelpers.ParseQuery(webhookUri.Query);
+        if (!query.TryGetValue(EvolutionWebhookTokenQueryKey, out var providedTokenValues))
+            return false;
+
+        return providedTokenValues
+            .Where(providedToken => !string.IsNullOrWhiteSpace(providedToken))
+            .Any(providedToken => FixedTimeEquals(providedToken!, expectedSecret));
+    }
+
+    private static string? SanitizeWebhookUrl(string? rawWebhookUrl)
+    {
+        if (string.IsNullOrWhiteSpace(rawWebhookUrl) || !Uri.TryCreate(rawWebhookUrl, UriKind.Absolute, out var webhookUri))
+            return rawWebhookUrl;
+
+        return webhookUri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+    }
+
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        var leftBytes = Encoding.UTF8.GetBytes(left);
+        var rightBytes = Encoding.UTF8.GetBytes(right);
+
+        return leftBytes.Length == rightBytes.Length &&
+               CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
 
     private IActionResult? ApplySecretUpdates(

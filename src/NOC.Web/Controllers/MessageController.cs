@@ -311,6 +311,13 @@ LIMIT {limit}")
                 return Conflict(new { message = recipientResolution.FailureMessage });
 
             EvolutionApiResponse evolutionResponse;
+            var evolutionMediaType = messageType switch
+            {
+                MessageType.IMAGE => "image",
+                MessageType.VIDEO => "video",
+                MessageType.AUDIO => "audio",
+                _ => "document",
+            };
 
             if (messageType == MessageType.AUDIO)
             {
@@ -328,13 +335,6 @@ LIMIT {limit}")
             }
             else
             {
-                var evolutionMediaType = messageType switch
-                {
-                    MessageType.IMAGE => "image",
-                    MessageType.VIDEO => "video",
-                    _ => "document",
-                };
-
                 evolutionResponse = await evolutionApiClient.SendMediaMessageAsync(
                     conversation.Inbox.EvolutionInstanceName,
                     new EvolutionSendMediaRequest

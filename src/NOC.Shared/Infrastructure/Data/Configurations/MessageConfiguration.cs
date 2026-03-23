@@ -19,7 +19,7 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(e => e.MediaFilename).HasMaxLength(255);
         builder.Property(e => e.TemplateName).HasMaxLength(100);
         builder.Property(e => e.TemplateParams).HasColumnType("jsonb");
-        builder.Property(e => e.ProviderMetadata).HasColumnType("jsonb").HasDefaultValueSql("'{}'");
+        builder.Property(e => e.ProviderMetadata).HasColumnType("text").HasDefaultValueSql("'{}'");
         builder.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
 
         builder.HasOne(e => e.Conversation)

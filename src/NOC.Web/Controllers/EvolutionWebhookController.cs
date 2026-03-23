@@ -23,15 +23,22 @@ public class EvolutionWebhookController(
     NocDbContext db,
     OutboxWriter outboxWriter,
     IConnectionMultiplexer redis,
+    IConfiguration configuration,
     ILogger<EvolutionWebhookController> logger) : ControllerBase
 {
     private const string MessagingIncomingStream = "stream:messaging:incoming";
     private const string StatusUpdatesStream = "stream:status:updates";
+    private const string WebhookTokenQueryKey = "token";
+    private const string WebhookTokenHeader = "X-Noc-Webhook-Token";
 
     [HttpPost]
     [HttpPost("{eventSlug}")]
     public async Task<IActionResult> Receive(Guid inboxId, string? eventSlug, [FromBody] JsonElement payload)
     {
+        var authError = EnsureWebhookAuthorized(inboxId);
+        if (authError is not null)
+            return authError;
+
         var normalizedEvent = NormalizeEventSlug(eventSlug, payload);
 
         return normalizedEvent switch
@@ -44,11 +51,23 @@ public class EvolutionWebhookController(
 
     [HttpPost("messages")]
     public async Task<IActionResult> ReceiveMessage(Guid inboxId, [FromBody] JsonElement payload)
-        => await ReceiveMessageInternal(inboxId, payload);
+    {
+        var authError = EnsureWebhookAuthorized(inboxId);
+        if (authError is not null)
+            return authError;
+
+        return await ReceiveMessageInternal(inboxId, payload);
+    }
 
     [HttpPost("status")]
     public async Task<IActionResult> ReceiveStatus(Guid inboxId, [FromBody] JsonElement payload)
-        => await ReceiveStatusInternal(inboxId, payload);
+    {
+        var authError = EnsureWebhookAuthorized(inboxId);
+        if (authError is not null)
+            return authError;
+
+        return await ReceiveStatusInternal(inboxId, payload);
+    }
 
     private async Task<IActionResult> ReceiveMessageInternal(Guid inboxId, JsonElement payload)
     {
@@ -164,6 +183,43 @@ public class EvolutionWebhookController(
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private IActionResult? EnsureWebhookAuthorized(Guid inboxId)
+    {
+        var expectedToken = configuration["NOC_EVOLUTION_WEBHOOK_SECRET"]
+            ?? configuration["Noc:EvolutionWebhookSecret"];
+
+        if (string.IsNullOrWhiteSpace(expectedToken))
+        {
+            logger.LogError(
+                "Rejected Evolution webhook for inbox {InboxId} because NOC_EVOLUTION_WEBHOOK_SECRET is not configured.",
+                inboxId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                message = "Evolution webhook secret is not configured.",
+            });
+        }
+
+        var providedToken = Request.Query[WebhookTokenQueryKey].FirstOrDefault()
+            ?? Request.Headers[WebhookTokenHeader].FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(providedToken) || !FixedTimeEquals(providedToken, expectedToken))
+        {
+            logger.LogWarning("Rejected Evolution webhook for inbox {InboxId} due to invalid token.", inboxId);
+            return Unauthorized(new { message = "Invalid webhook token." });
+        }
+
+        return null;
+    }
+
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        var leftBytes = Encoding.UTF8.GetBytes(left);
+        var rightBytes = Encoding.UTF8.GetBytes(right);
+
+        return leftBytes.Length == rightBytes.Length &&
+               CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
 
     private static string? ExtractExternalId(JsonElement payload)

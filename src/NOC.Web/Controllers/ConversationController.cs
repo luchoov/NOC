@@ -157,6 +157,11 @@ public class ConversationController(NocDbContext db, AuditService auditService) 
         if (targetAgent is null)
             return BadRequest(new { message = "Target agent does not exist or is inactive." });
 
+        var targetHasInboxAccess = targetAgent.Role is AgentRole.ADMIN or AgentRole.SUPERVISOR ||
+            await db.InboxAgents.AnyAsync(ia => ia.InboxId == conversation.InboxId && ia.AgentId == request.AgentId);
+        if (!targetHasInboxAccess)
+            return BadRequest(new { message = "Target agent is not assigned to this inbox." });
+
         var requesterRole = ResolveRole();
         var canReassign = requesterRole is AgentRole.ADMIN or AgentRole.SUPERVISOR;
         var previousAssignee = conversation.AssignedTo;
@@ -216,8 +221,8 @@ UPDATE conversations
 SET
     status = {statusText},
     snoozed_until = {snoozedUntil},
-    resolved_at = CASE WHEN {statusText} = 'RESOLVED' THEN now() ELSE resolved_at END,
-    closed_by = CASE WHEN {statusText} = 'RESOLVED' THEN {requesterAgentId} ELSE closed_by END,
+    resolved_at = CASE WHEN {statusText} = 'RESOLVED' THEN now() ELSE NULL END,
+    closed_by = CASE WHEN {statusText} = 'RESOLVED' THEN {requesterAgentId} ELSE NULL END,
     row_version = row_version + 1,
     updated_at = now()
 WHERE

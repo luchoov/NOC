@@ -823,7 +823,7 @@ namespace NOC.Web.Migrations
                     b.Property<string>("ProviderMetadata")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("jsonb")
+                        .HasColumnType("text")
                         .HasColumnName("provider_metadata")
                         .HasDefaultValueSql("'{}'");
 
