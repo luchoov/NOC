@@ -133,7 +133,7 @@ services:
       context: ./src/noc-frontend
       dockerfile: Dockerfile
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_PORT:-3001}:3000"
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://noc-web:8080}
     depends_on:
