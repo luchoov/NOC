@@ -4,24 +4,18 @@
 'use client';
 
 import { useState } from 'react';
-import { Lock, FileText, Download, X } from 'lucide-react';
+import { Lock, X } from 'lucide-react';
 import type { MessageResponse } from '@/types/api';
 import { DELIVERY } from '@/lib/utils/constants';
 import { formatTime } from '@/lib/utils/format-date';
 import { cn } from '@/lib/utils';
+import { AuthImage, AuthVideo, AuthAudio, AuthDocument } from './media-elements';
 
 interface MessageBubbleProps {
   message: MessageResponse;
 }
 
-function formatFileSize(bytes: number | null): string {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function mediaUrl(m: MessageResponse): string {
+function mediaPath(m: MessageResponse): string {
   return `/api/conversations/${m.conversationId}/messages/${m.id}/media`;
 }
 
@@ -64,13 +58,7 @@ export function MessageBubble({ message: m }: MessageBubbleProps) {
     return (
       <div className={cn('flex py-0.5', isOutbound ? 'justify-end' : 'justify-start')}>
         <div className="max-w-[160px]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={mediaUrl(m)}
-            alt="Sticker"
-            className="h-32 w-32 object-contain"
-            loading="lazy"
-          />
+          <AuthImage apiPath={mediaPath(m)} alt="Sticker" className="h-32 w-32 object-contain" />
           <div className={cn('mt-0.5 flex items-center gap-1.5', isOutbound ? 'justify-end' : 'justify-start')}>
             <span className="text-[9px] text-zinc-500">{formatTime(m.createdAt)}</span>
             {isOutbound && <DeliveryIcon m={m} />}
@@ -100,57 +88,27 @@ export function MessageBubble({ message: m }: MessageBubbleProps) {
               onClick={() => setLightbox(true)}
               className="mb-1.5 block w-full overflow-hidden rounded-md cursor-pointer"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={mediaUrl(m)}
-                alt=""
-                className="max-h-64 w-full object-cover"
-                loading="lazy"
-              />
+              <AuthImage apiPath={mediaPath(m)} className="max-h-64 w-full object-cover" />
             </button>
           )}
 
           {/* Video */}
           {m.mediaUrl && m.type === 'VIDEO' && (
             <div className="mb-1.5 overflow-hidden rounded-md">
-              <video
-                controls
-                preload="metadata"
-                className="max-h-64 w-full"
-              >
-                <source src={mediaUrl(m)} type={m.mediaMimeType ?? 'video/mp4'} />
-              </video>
+              <AuthVideo apiPath={mediaPath(m)} mimeType={m.mediaMimeType} className="max-h-64 w-full" />
             </div>
           )}
 
           {/* Audio */}
           {m.mediaUrl && m.type === 'AUDIO' && (
             <div className="mb-1.5">
-              <audio controls className="h-10 w-full min-w-[220px]" preload="none">
-                <source src={mediaUrl(m)} type={m.mediaMimeType ?? 'audio/ogg'} />
-              </audio>
+              <AuthAudio apiPath={mediaPath(m)} mimeType={m.mediaMimeType} />
             </div>
           )}
 
           {/* Document */}
           {m.mediaUrl && m.type === 'DOCUMENT' && (
-            <a
-              href={mediaUrl(m)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mb-1.5 flex items-center gap-2.5 rounded-md bg-zinc-700/30 px-3 py-2"
-            >
-              <FileText className="h-5 w-5 shrink-0 text-blue-400" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-blue-400">
-                  {m.mediaFilename ?? 'Documento'}
-                </p>
-                {m.mediaSizeBytes && (
-                  <p className="text-[10px] text-zinc-500">{formatFileSize(m.mediaSizeBytes)}</p>
-                )}
-              </div>
-              <Download className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-            </a>
+            <AuthDocument apiPath={mediaPath(m)} filename={m.mediaFilename} sizeBytes={m.mediaSizeBytes} />
           )}
 
           {/* Location placeholder */}
@@ -197,13 +155,9 @@ export function MessageBubble({ message: m }: MessageBubbleProps) {
           >
             <X className="h-5 w-5" />
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={mediaUrl(m)}
-            alt=""
-            className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <div onClick={(e) => e.stopPropagation()}>
+            <AuthImage apiPath={mediaPath(m)} className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain" />
+          </div>
         </div>
       )}
     </>

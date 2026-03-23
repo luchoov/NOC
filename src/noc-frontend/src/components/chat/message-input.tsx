@@ -4,7 +4,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Send, Lock, Loader2, Paperclip, X, FileText, Image as ImageIcon, Film, Music } from 'lucide-react';
+import { Send, Lock, Loader2, Paperclip, X, FileText, Image as ImageIcon, Film, Music, Mic, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { sendMessage, sendMediaMessage } from '@/lib/api/messages';
 import type { MessageResponse } from '@/types/api';
@@ -37,8 +37,12 @@ export function MessageInput({ conversationId, onSent }: MessageInputProps) {
   const [sending, setSending] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = e.target.files?.[0];
@@ -67,6 +71,64 @@ export function MessageInput({ conversationId, onSent }: MessageInputProps) {
   function clearFile() {
     setFile(null);
     setFilePreview(null);
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        setRecordingTime(0);
+
+        const blob = new Blob(chunks, { type: mimeType });
+        const audioFile = new File([blob], `audio-${Date.now()}.webm`, { type: mimeType });
+        setFile(audioFile);
+        setFilePreview(null);
+        setRecording(false);
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000);
+    } catch {
+      toast.error('No se pudo acceder al microfono.');
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+  }
+
+  function cancelRecording() {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.ondataavailable = null;
+      mediaRecorderRef.current.onstop = null;
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+      mediaRecorderRef.current.stop();
+    }
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    mediaRecorderRef.current = null;
+    setRecording(false);
+    setRecordingTime(0);
+  }
+
+  function formatRecordingTime(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
   async function handleSend() {
@@ -175,79 +237,119 @@ export function MessageInput({ conversationId, onSent }: MessageInputProps) {
         </div>
       )}
 
-      <div className="flex items-end gap-2">
-        {/* File attachment button */}
-        {!isNote && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar"
-              onChange={handleFileSelect}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              title="Adjuntar archivo"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-            </button>
-          </>
-        )}
-
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onInput={handleInput}
-          placeholder={
-            file
-              ? 'Agregar un comentario (opcional)...'
-              : isNote
-                ? 'Escribí una nota privada...'
-                : 'Escribí un mensaje...'
-          }
-          rows={1}
-          className={cn(
-            'flex-1 resize-none rounded-md border bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors',
-            isNote
-              ? 'border-blue-500/30 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25'
-              : 'border-zinc-800 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25',
-          )}
-        />
-
-        <div className="flex items-center gap-1">
-          {/* Note toggle (only when no file attached) */}
-          {!file && (
-            <button
-              type="button"
-              onClick={() => setIsNote(!isNote)}
-              title={isNote ? 'Cambiar a mensaje' : 'Nota privada'}
-              className={cn(
-                'grid h-8 w-8 place-items-center rounded-md transition-colors',
-                isNote
-                  ? 'bg-blue-500/15 text-blue-400'
-                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
-              )}
-            >
-              <Lock className="h-3.5 w-3.5" />
-            </button>
-          )}
-
-          {/* Send */}
+      {/* Recording state */}
+      {recording ? (
+        <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={handleSend}
-            disabled={(!content.trim() && !file) || sending}
-            className="grid h-8 w-8 place-items-center rounded-md bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+            onClick={cancelRecording}
+            title="Cancelar"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-red-400"
           >
-            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            <X className="h-3.5 w-3.5" />
+          </button>
+          <div className="flex flex-1 items-center gap-2">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+            <span className="text-xs font-medium text-red-400">
+              Grabando {formatRecordingTime(recordingTime)}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={stopRecording}
+            title="Detener y adjuntar"
+            className="grid h-8 w-8 place-items-center rounded-md bg-red-600 text-white transition-colors hover:bg-red-500"
+          >
+            <Square className="h-3 w-3" />
           </button>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-end gap-2">
+          {/* File attachment button */}
+          {!isNote && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar"
+                onChange={handleFileSelect}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="Adjuntar archivo"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              >
+                <Paperclip className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onInput={handleInput}
+            placeholder={
+              file
+                ? 'Agregar un comentario (opcional)...'
+                : isNote
+                  ? 'Escribí una nota privada...'
+                  : 'Escribí un mensaje...'
+            }
+            rows={1}
+            className={cn(
+              'flex-1 resize-none rounded-md border bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors',
+              isNote
+                ? 'border-blue-500/30 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25'
+                : 'border-zinc-800 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25',
+            )}
+          />
+
+          <div className="flex items-center gap-1">
+            {/* Note toggle (only when no file attached) */}
+            {!file && (
+              <button
+                type="button"
+                onClick={() => setIsNote(!isNote)}
+                title={isNote ? 'Cambiar a mensaje' : 'Nota privada'}
+                className={cn(
+                  'grid h-8 w-8 place-items-center rounded-md transition-colors',
+                  isNote
+                    ? 'bg-blue-500/15 text-blue-400'
+                    : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+                )}
+              >
+                <Lock className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Mic button (only when no text/file and not in note mode) */}
+            {!content.trim() && !file && !isNote && (
+              <button
+                type="button"
+                onClick={startRecording}
+                title="Grabar audio"
+                className="grid h-8 w-8 place-items-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              >
+                <Mic className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Send */}
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={(!content.trim() && !file) || sending}
+              className="grid h-8 w-8 place-items-center rounded-md bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+            >
+              {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

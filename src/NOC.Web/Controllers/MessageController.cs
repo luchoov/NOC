@@ -286,12 +286,21 @@ LIMIT {limit}")
         var fileName = file.FileName ?? "media";
         var objectKey = $"{conversation.InboxId}/{now:yyyy/MM}/{messageId}/{fileName}";
 
-        // Upload to MinIO
-        await using var stream = file.OpenReadStream();
-        await mediaStorage.UploadAsync(stream, objectKey, mimeType, file.Length, cancellationToken);
+        // Upload to MinIO and read as base64 for Evolution API
+        byte[] fileBytes;
+        await using (var readStream = file.OpenReadStream())
+        {
+            using var ms = new MemoryStream();
+            await readStream.CopyToAsync(ms, cancellationToken);
+            fileBytes = ms.ToArray();
+        }
 
-        // Generate presigned URL for Evolution API
-        var presignedUrl = await mediaStorage.GeneratePresignedUrlAsync(objectKey, TimeSpan.FromMinutes(15), cancellationToken);
+        await using (var uploadStream = new MemoryStream(fileBytes))
+        {
+            await mediaStorage.UploadAsync(uploadStream, objectKey, mimeType, file.Length, cancellationToken);
+        }
+
+        var base64Media = $"data:{mimeType};base64,{Convert.ToBase64String(fileBytes)}";
 
         // Send via Evolution API
         try
@@ -315,7 +324,7 @@ LIMIT {limit}")
                 {
                     Number = recipientResolution.Number,
                     MediaType = evolutionMediaType,
-                    Media = presignedUrl,
+                    Media = base64Media,
                     Caption = caption,
                     FileName = fileName,
                 },
