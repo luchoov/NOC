@@ -300,7 +300,7 @@ LIMIT {limit}")
             await mediaStorage.UploadAsync(uploadStream, objectKey, mimeType, file.Length, cancellationToken);
         }
 
-        var base64Media = $"data:{mimeType};base64,{Convert.ToBase64String(fileBytes)}";
+        var base64Media = Convert.ToBase64String(fileBytes);
 
         // Send via Evolution API
         try

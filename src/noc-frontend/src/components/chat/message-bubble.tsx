@@ -86,23 +86,26 @@ export function MessageBubble({ message: m }: MessageBubbleProps) {
             <button
               type="button"
               onClick={() => setLightbox(true)}
-              className="mb-1.5 block w-full overflow-hidden rounded-md cursor-pointer"
+              className="mb-1.5 block w-full overflow-hidden rounded-lg cursor-pointer group"
             >
-              <AuthImage apiPath={mediaPath(m)} className="max-h-64 w-full object-cover" />
+              <AuthImage
+                apiPath={mediaPath(m)}
+                className="max-h-72 w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+              />
             </button>
           )}
 
           {/* Video */}
           {m.mediaUrl && m.type === 'VIDEO' && (
-            <div className="mb-1.5 overflow-hidden rounded-md">
-              <AuthVideo apiPath={mediaPath(m)} mimeType={m.mediaMimeType} className="max-h-64 w-full" />
+            <div className="mb-1.5 overflow-hidden rounded-lg">
+              <AuthVideo apiPath={mediaPath(m)} mimeType={m.mediaMimeType} className="max-h-72 w-full" />
             </div>
           )}
 
           {/* Audio */}
           {m.mediaUrl && m.type === 'AUDIO' && (
             <div className="mb-1.5">
-              <AuthAudio apiPath={mediaPath(m)} mimeType={m.mediaMimeType} />
+              <AuthAudio apiPath={mediaPath(m)} mimeType={m.mediaMimeType} isOutbound={isOutbound} />
             </div>
           )}
 
