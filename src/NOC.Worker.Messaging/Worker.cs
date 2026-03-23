@@ -660,8 +660,27 @@ public class Worker(
                             }
                         }
 
-                        // Store the raw message JSON for Evolution's getBase64FromMediaMessage
-                        rawMessageJson = messageElement.GetRawText();
+                        // Store the full key+message wrapper for Evolution's getBase64FromMediaMessage
+                        // Evolution API needs { key: {...}, message: {...} } to download media
+                        JsonElement keyElement = default;
+                        var hasKey = false;
+                        if (root.TryGetProperty("data", out var dataForKey) && dataForKey.TryGetProperty("key", out keyElement))
+                            hasKey = true;
+                        else if (root.TryGetProperty("key", out keyElement))
+                            hasKey = true;
+
+                        if (hasKey)
+                        {
+                            rawMessageJson = JsonSerializer.Serialize(new
+                            {
+                                key = JsonSerializer.Deserialize<JsonElement>(keyElement.GetRawText()),
+                                message = JsonSerializer.Deserialize<JsonElement>(messageElement.GetRawText()),
+                            });
+                        }
+                        else
+                        {
+                            rawMessageJson = messageElement.GetRawText();
+                        }
                         break;
                     }
                 }
