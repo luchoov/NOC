@@ -26,7 +26,7 @@ export function NewConversationModal({ inboxes, selectedInboxId, onCreated, onCl
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
 
   // Focus search on mount
