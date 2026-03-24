@@ -8,6 +8,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   Inbox,
   Users,
+  ListFilter,
   Megaphone,
   Settings,
   LogOut,
@@ -22,6 +23,7 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { href: '/inbox', label: 'Bandeja', icon: Inbox },
   { href: '/contacts', label: 'Contactos', icon: Users },
+  { href: '/audiences', label: 'Audiencias', icon: ListFilter },
   { href: '/campaigns', label: 'Campañas', icon: Megaphone },
   { href: '/settings', label: 'Configuración', icon: Settings },
 ] as const;

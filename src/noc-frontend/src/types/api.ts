@@ -208,6 +208,68 @@ export interface CsvImportResult {
   totalProcessed: number;
 }
 
+// ── Contact Lists ────────────────────────────────────────────────────────
+
+export interface ContactListResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateContactListRequest {
+  name: string;
+  description?: string | null;
+}
+
+export interface UpdateContactListRequest {
+  name?: string | null;
+  description?: string | null;
+}
+
+export interface AddMembersRequest {
+  contactIds: string[];
+}
+
+export interface RemoveMembersRequest {
+  contactIds: string[];
+}
+
+// ── Segments ─────────────────────────────────────────────────────────────
+
+export type SegmentRuleField = 'locality' | 'tags' | 'email';
+export type SegmentRuleOperator = 'equals' | 'contains' | 'has_any_of' | 'has_all_of' | 'is_present' | 'is_absent';
+
+export interface SegmentRule {
+  field: SegmentRuleField;
+  operator: SegmentRuleOperator;
+  value?: string | string[];
+}
+
+export interface SegmentResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  rules: SegmentRule[];
+  matchingContactCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSegmentRequest {
+  name: string;
+  description?: string | null;
+  rules?: SegmentRule[] | null;
+}
+
+export interface UpdateSegmentRequest {
+  name?: string | null;
+  description?: string | null;
+  rules?: SegmentRule[] | null;
+}
+
 // ── Inboxes ──────────────────────────────────────────────────────────────
 
 export interface InboxResponse {

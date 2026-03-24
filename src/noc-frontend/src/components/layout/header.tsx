@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation';
 const TITLES: Record<string, string> = {
   '/inbox': 'Bandeja',
   '/contacts': 'Contactos',
+  '/audiences': 'Audiencias',
   '/campaigns': 'Campañas',
   '/settings': 'Configuración',
   '/settings/inboxes': 'Bandejas',

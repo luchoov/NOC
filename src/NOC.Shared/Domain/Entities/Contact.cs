@@ -23,5 +23,6 @@ public class Contact
 
     // Navigation
     public ICollection<ContactTag> Tags { get; set; } = [];
+    public ICollection<ContactListMember> ListMemberships { get; set; } = [];
     public ICollection<Conversation> Conversations { get; set; } = [];
 }

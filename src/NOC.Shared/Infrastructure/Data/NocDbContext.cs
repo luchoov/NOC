@@ -19,6 +19,9 @@ public class NocDbContext(DbContextOptions<NocDbContext> options) : DbContext(op
     public DbSet<MessageStatusEvent> MessageStatusEvents => Set<MessageStatusEvent>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+    public DbSet<ContactList> ContactLists => Set<ContactList>();
+    public DbSet<ContactListMember> ContactListMembers => Set<ContactListMember>();
+    public DbSet<Segment> Segments => Set<Segment>();
     public DbSet<Campaign> Campaigns => Set<Campaign>();
     public DbSet<CampaignRecipient> CampaignRecipients => Set<CampaignRecipient>();
     public DbSet<ProxyOutbound> ProxyOutbounds => Set<ProxyOutbound>();
