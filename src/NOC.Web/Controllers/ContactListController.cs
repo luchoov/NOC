@@ -23,34 +23,29 @@ public class ContactListController(NocDbContext db, AuditService auditService) :
     {
         limit = Math.Clamp(limit, 1, 200);
 
-        var lists = await db.ContactLists
+        var rows = await db.ContactLists
             .AsNoTracking()
-            .Select(l => new ContactListResponse(
-                l.Id, l.Name, l.Description,
-                l.Members.Count,
-                l.CreatedAt, l.UpdatedAt))
             .OrderBy(l => l.Name)
             .Take(limit)
+            .Select(l => new { l.Id, l.Name, l.Description, MemberCount = l.Members.Count, l.CreatedAt, l.UpdatedAt })
             .ToListAsync();
 
-        return Ok(lists);
+        return Ok(rows.Select(l => new ContactListResponse(l.Id, l.Name, l.Description, l.MemberCount, l.CreatedAt, l.UpdatedAt)));
     }
 
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var list = await db.ContactLists
+        var row = await db.ContactLists
             .AsNoTracking()
-            .Select(l => new ContactListResponse(
-                l.Id, l.Name, l.Description,
-                l.Members.Count,
-                l.CreatedAt, l.UpdatedAt))
-            .FirstOrDefaultAsync(l => l.Id == id);
+            .Where(l => l.Id == id)
+            .Select(l => new { l.Id, l.Name, l.Description, MemberCount = l.Members.Count, l.CreatedAt, l.UpdatedAt })
+            .FirstOrDefaultAsync();
 
-        if (list is null)
+        if (row is null)
             return NotFound(new { message = "List not found" });
 
-        return Ok(list);
+        return Ok(new ContactListResponse(row.Id, row.Name, row.Description, row.MemberCount, row.CreatedAt, row.UpdatedAt));
     }
 
     [HttpPost]
