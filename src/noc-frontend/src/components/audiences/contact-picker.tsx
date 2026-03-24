@@ -20,7 +20,7 @@ export function ContactPicker({ excludeIds, onSelect, onCancel }: ContactPickerP
   const [results, setResults] = useState<ContactResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Map<string, ContactResponse>>(new Map());
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const search = useCallback(
     async (q: string) => {
@@ -42,9 +42,9 @@ export function ContactPicker({ excludeIds, onSelect, onCancel }: ContactPickerP
   }, [search]);
 
   useEffect(() => {
-    clearTimeout(debounceRef.current);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => search(query), 300);
-    return () => clearTimeout(debounceRef.current);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, search]);
 
   function toggleContact(contact: ContactResponse) {
