@@ -5,7 +5,7 @@ import * as signalR from '@microsoft/signalr';
 import { useAuthStore } from '@/lib/store/auth.store';
 
 // SignalR needs direct connection (WebSocket can't go through Next.js rewrites)
-const HUB_URL = process.env.NEXT_PUBLIC_SIGNALR_URL || 'http://localhost:8080';
+const HUB_URL = process.env.NEXT_PUBLIC_SIGNALR_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 let connection: signalR.HubConnection | null = null;
 let readyVersion = 0;
@@ -20,7 +20,7 @@ function buildConnection(): signalR.HubConnection {
       nextRetryDelayInMilliseconds: (ctx) =>
         Math.min(1000 * Math.pow(2, ctx.previousRetryCount), 30_000),
     })
-    .configureLogging(signalR.LogLevel.None)
+    .configureLogging(signalR.LogLevel.Information)
     .build();
 }
 
