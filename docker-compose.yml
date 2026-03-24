@@ -80,6 +80,7 @@ services:
       MinIO__Bucket: ${MINIO_BUCKET:-noc-media}
       MinIO__UseSSL: "false"
       NOC_PUBLIC_BASE_URL: ${NOC_PUBLIC_BASE_URL:-}
+      NOC_EVOLUTION_WEBHOOK_SECRET: ${NOC_EVOLUTION_WEBHOOK_SECRET:-}
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
     depends_on:
       noc-migrate:
