@@ -4,7 +4,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Phone, Mail, Tag, Calendar, Loader2 } from 'lucide-react';
+import { X, Phone, Mail, MapPin, Tag, Calendar, Loader2 } from 'lucide-react';
 import { getContact } from '@/lib/api/contacts';
 import type { ConversationResponse, ContactResponse } from '@/types/api';
 import type { ApiError } from '@/lib/api/client';
@@ -65,6 +65,7 @@ export function ContactPanel({ conversation: c, onClose }: ContactPanelProps) {
           <div className="space-y-2">
             <InfoRow icon={Phone} label="Teléfono" value={c.contactPhone} />
             {contact?.email && <InfoRow icon={Mail} label="Email" value={contact.email} />}
+            {contact?.locality && <InfoRow icon={MapPin} label="Localidad" value={contact.locality} />}
             <InfoRow icon={Calendar} label="Creado" value={contact ? formatFull(contact.createdAt) : '—'} />
           </div>
 

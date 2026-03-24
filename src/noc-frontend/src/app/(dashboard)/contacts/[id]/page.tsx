@@ -13,6 +13,7 @@ import {
   Calendar,
   Loader2,
   Mail,
+  MapPin,
   Phone,
   Plus,
   Save,
@@ -52,6 +53,7 @@ export default function ContactDetailPage() {
     defaultValues: {
       name: '',
       email: '',
+      locality: '',
       avatarUrl: '',
     },
   });
@@ -68,6 +70,7 @@ export default function ContactDetailPage() {
         reset({
           name: data.name ?? '',
           email: data.email ?? '',
+          locality: data.locality ?? '',
           avatarUrl: data.avatarUrl ?? '',
         });
         setCustomAttrsText(stringifyCustomAttrs(data.customAttrs));
@@ -102,6 +105,7 @@ export default function ContactDetailPage() {
       const updated = await updateContact(contact.id, {
         name: values.name?.trim() || null,
         email: values.email?.trim() || null,
+        locality: values.locality?.trim() || null,
         avatarUrl: values.avatarUrl?.trim() || null,
         customAttrs,
       });
@@ -110,6 +114,7 @@ export default function ContactDetailPage() {
       reset({
         name: updated.name ?? '',
         email: updated.email ?? '',
+        locality: updated.locality ?? '',
         avatarUrl: updated.avatarUrl ?? '',
       });
       setCustomAttrsText(stringifyCustomAttrs(updated.customAttrs));
@@ -304,6 +309,15 @@ export default function ContactDetailPage() {
                 {errors.email && <p className="mt-1 text-[10px] text-red-400">{errors.email.message}</p>}
               </Field>
 
+              <Field label="Localidad">
+                <input
+                  {...register('locality')}
+                  placeholder="Buenos Aires"
+                  className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
+                />
+                {errors.locality && <p className="mt-1 text-[10px] text-red-400">{errors.locality.message}</p>}
+              </Field>
+
               <Field label="Avatar URL">
                 <input
                   {...register('avatarUrl')}
@@ -423,6 +437,11 @@ export default function ContactDetailPage() {
                 icon={<Mail className="h-3.5 w-3.5 text-zinc-600" />}
                 label="Email"
                 value={contact.email || 'Sin email'}
+              />
+              <InfoRow
+                icon={<MapPin className="h-3.5 w-3.5 text-zinc-600" />}
+                label="Localidad"
+                value={contact.locality || 'Sin localidad'}
               />
               <InfoRow
                 icon={<Calendar className="h-3.5 w-3.5 text-zinc-600" />}

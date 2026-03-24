@@ -9,6 +9,7 @@ public sealed record CreateContactRequest(
     string Phone,
     string? Name = null,
     string? Email = null,
+    string? Locality = null,
     string? AvatarUrl = null,
     JsonElement? CustomAttrs = null,
     IReadOnlyList<string>? Tags = null);
@@ -16,6 +17,7 @@ public sealed record CreateContactRequest(
 public sealed record UpdateContactRequest(
     string? Name = null,
     string? Email = null,
+    string? Locality = null,
     string? AvatarUrl = null,
     JsonElement? CustomAttrs = null,
     bool ReplaceTags = false,
@@ -28,6 +30,7 @@ public sealed record ContactResponse(
     string Phone,
     string? Name,
     string? Email,
+    string? Locality,
     string? AvatarUrl,
     JsonElement CustomAttrs,
     IReadOnlyList<string> Tags,

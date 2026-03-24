@@ -39,6 +39,7 @@ export function ContactCreateModal({
       phone: '',
       name: '',
       email: '',
+      locality: '',
       avatarUrl: '',
       tags: [],
     },
@@ -69,6 +70,7 @@ export function ContactCreateModal({
         phone: data.phone.trim(),
         name: data.name?.trim() || undefined,
         email: data.email?.trim() || undefined,
+        locality: data.locality?.trim() || undefined,
         avatarUrl: data.avatarUrl?.trim() || undefined,
         tags: parseTagInput(tagsInput),
       });
@@ -142,14 +144,24 @@ export function ContactCreateModal({
             </div>
 
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-zinc-400">Avatar URL</label>
+              <label className="block text-xs font-medium text-zinc-400">Localidad</label>
               <input
-                {...register('avatarUrl')}
-                placeholder="https://..."
+                {...register('locality')}
+                placeholder="Buenos Aires"
                 className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
               />
-              {errors.avatarUrl && <p className="text-[10px] text-red-400">{errors.avatarUrl.message}</p>}
+              {errors.locality && <p className="text-[10px] text-red-400">{errors.locality.message}</p>}
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-zinc-400">Avatar URL</label>
+            <input
+              {...register('avatarUrl')}
+              placeholder="https://..."
+              className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
+            />
+            {errors.avatarUrl && <p className="text-[10px] text-red-400">{errors.avatarUrl.message}</p>}
           </div>
 
           <div className="space-y-1">

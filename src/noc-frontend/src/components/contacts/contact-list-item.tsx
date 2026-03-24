@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, Loader2, Mail, Phone, Sparkles, Trash2, UserX } from 'lucide-react';
+import { ArrowUpRight, Loader2, Mail, MapPin, Phone, Sparkles, Trash2, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteContact } from '@/lib/api/contacts';
 import type { ContactResponse } from '@/types/api';
@@ -74,6 +74,12 @@ export function ContactListItem({ contact, onDeleted }: ContactListItemProps) {
                 <span className="inline-flex items-center gap-1">
                   <Mail className="h-3 w-3" />
                   {contact.email}
+                </span>
+              )}
+              {contact.locality && (
+                <span className="inline-flex items-center gap-1">
+                  <MapPin className="h-3 w-3" />
+                  {contact.locality}
                 </span>
               )}
             </div>

@@ -11,6 +11,7 @@ public class Contact
     public required string Phone { get; set; }
     public string? Name { get; set; }
     public string? Email { get; set; }
+    public string? Locality { get; set; }
     public string? AvatarUrl { get; set; }
     public string CustomAttrs { get; set; } = "{}";
 

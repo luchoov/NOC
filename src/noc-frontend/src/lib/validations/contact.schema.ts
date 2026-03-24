@@ -7,6 +7,7 @@ export const createContactSchema = z.object({
   phone: z.string().min(8, 'Telefono invalido').max(20),
   name: z.string().max(150).optional(),
   email: z.union([z.email(), z.literal('')]).optional(),
+  locality: z.string().max(150).optional(),
   avatarUrl: z.union([z.url(), z.literal('')]).optional(),
   tags: z.array(z.string().max(50)).optional(),
 });
@@ -14,6 +15,7 @@ export const createContactSchema = z.object({
 export const updateContactSchema = z.object({
   name: z.string().max(150).optional(),
   email: z.union([z.email(), z.literal('')]).optional(),
+  locality: z.string().max(150).optional(),
   avatarUrl: z.union([z.url(), z.literal('')]).optional(),
 });
 

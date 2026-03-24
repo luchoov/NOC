@@ -169,6 +169,7 @@ export interface ContactResponse {
   phone: string;
   name: string | null;
   email: string | null;
+  locality: string | null;
   avatarUrl: string | null;
   customAttrs: Record<string, unknown>;
   tags: string[];
@@ -180,6 +181,7 @@ export interface CreateContactRequest {
   phone: string;
   name?: string | null;
   email?: string | null;
+  locality?: string | null;
   avatarUrl?: string | null;
   customAttrs?: Record<string, unknown> | null;
   tags?: string[] | null;
@@ -188,6 +190,7 @@ export interface CreateContactRequest {
 export interface UpdateContactRequest {
   name?: string | null;
   email?: string | null;
+  locality?: string | null;
   avatarUrl?: string | null;
   customAttrs?: Record<string, unknown> | null;
   replaceTags?: boolean;

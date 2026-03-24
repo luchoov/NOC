@@ -37,7 +37,8 @@ public class ContactController(NocDbContext db, AuditService auditService) : Con
             query = query.Where(c =>
                 EF.Functions.ILike(c.Phone, pattern) ||
                 (c.Name != null && EF.Functions.ILike(c.Name, pattern)) ||
-                (c.Email != null && EF.Functions.ILike(c.Email, pattern)));
+                (c.Email != null && EF.Functions.ILike(c.Email, pattern)) ||
+                (c.Locality != null && EF.Functions.ILike(c.Locality, pattern)));
         }
 
         if (!string.IsNullOrWhiteSpace(tag))
@@ -87,6 +88,7 @@ public class ContactController(NocDbContext db, AuditService auditService) : Con
             Phone = normalizedPhone,
             Name = request.Name?.Trim(),
             Email = request.Email?.Trim(),
+            Locality = request.Locality?.Trim(),
             AvatarUrl = request.AvatarUrl?.Trim(),
             CustomAttrs = NormalizeJson(request.CustomAttrs),
             CreatedAt = now,
@@ -128,6 +130,8 @@ public class ContactController(NocDbContext db, AuditService auditService) : Con
             contact.Name = request.Name.Trim();
         if (request.Email is not null)
             contact.Email = request.Email.Trim();
+        if (request.Locality is not null)
+            contact.Locality = request.Locality.Trim();
         if (request.AvatarUrl is not null)
             contact.AvatarUrl = request.AvatarUrl.Trim();
         if (request.CustomAttrs.HasValue)
@@ -317,6 +321,7 @@ public class ContactController(NocDbContext db, AuditService auditService) : Con
             contact.Phone,
             contact.Name,
             contact.Email,
+            contact.Locality,
             contact.AvatarUrl,
             ParseJsonOrDefault(contact.CustomAttrs),
             contact.Tags.OrderBy(t => t.Tag).Select(t => t.Tag).ToArray(),

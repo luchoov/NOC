@@ -17,6 +17,7 @@ public class ContactConfiguration : IEntityTypeConfiguration<Contact>
         builder.Property(e => e.Phone).HasMaxLength(20).IsRequired();
         builder.Property(e => e.Name).HasMaxLength(150);
         builder.Property(e => e.Email).HasMaxLength(200);
+        builder.Property(e => e.Locality).HasMaxLength(150);
         builder.Property(e => e.CustomAttrs).HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         builder.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
         builder.Property(e => e.UpdatedAt).HasDefaultValueSql("now()");
@@ -25,7 +26,7 @@ public class ContactConfiguration : IEntityTypeConfiguration<Contact>
         builder.Property(e => e.SearchVector)
             .HasColumnType("tsvector")
             .HasComputedColumnSql(
-                "to_tsvector('spanish', coalesce(name, '') || ' ' || phone || ' ' || coalesce(email, ''))",
+                "to_tsvector('spanish', coalesce(name, '') || ' ' || phone || ' ' || coalesce(email, '') || ' ' || coalesce(locality, ''))",
                 stored: true);
 
         builder.HasIndex(e => e.Phone).IsUnique();
