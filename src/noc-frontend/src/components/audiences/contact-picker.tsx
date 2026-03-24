@@ -20,7 +20,7 @@ export function ContactPicker({ excludeIds, onSelect, onCancel }: ContactPickerP
   const [results, setResults] = useState<ContactResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Map<string, ContactResponse>>(new Map());
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   const search = useCallback(
     async (q: string) => {
