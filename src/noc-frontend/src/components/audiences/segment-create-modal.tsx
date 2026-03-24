@@ -86,8 +86,8 @@ export function SegmentCreateModal({ open, onClose, onSaved, editSegment }: Segm
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800/60 px-5 py-4">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800/60 px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold text-zinc-100">
               {isEdit ? 'Editar segmento' : 'Nuevo segmento'}
@@ -105,34 +105,36 @@ export function SegmentCreateModal({ open, onClose, onSaved, editSegment }: Segm
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 p-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-zinc-400">Nombre</label>
-              <input
-                {...register('name')}
-                placeholder="Clientes Buenos Aires"
-                className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
-              />
-              {errors.name && <p className="text-[10px] text-red-400">{errors.name.message}</p>}
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 space-y-4 overflow-auto p-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-zinc-400">Nombre</label>
+                <input
+                  {...register('name')}
+                  placeholder="Clientes Buenos Aires"
+                  className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
+                />
+                {errors.name && <p className="text-[10px] text-red-400">{errors.name.message}</p>}
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-zinc-400">Descripcion</label>
+                <input
+                  {...register('description')}
+                  placeholder="Opcional"
+                  className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
+                />
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-zinc-400">Descripcion</label>
-              <input
-                {...register('description')}
-                placeholder="Opcional"
-                className="block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/25"
-              />
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-zinc-400">Reglas (todas deben cumplirse)</label>
+              <SegmentRuleBuilder rules={rules} onChange={setRules} />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label className="block text-xs font-medium text-zinc-400">Reglas (todas deben cumplirse)</label>
-            <SegmentRuleBuilder rules={rules} onChange={setRules} />
-          </div>
-
-          <div className="flex items-center justify-end gap-2 border-t border-zinc-800/60 pt-4">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-800/60 px-5 py-4">
             <button
               type="button"
               onClick={onClose}
