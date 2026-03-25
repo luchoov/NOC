@@ -120,6 +120,15 @@ try
 
     var app = builder.Build();
 
+    // Global exception handler — return details in non-production
+    app.UseExceptionHandler(err => err.Run(async context =>
+    {
+        var ex = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        context.Response.StatusCode = 500;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new { error = ex?.GetType().Name, message = ex?.Message, stack = ex?.StackTrace?[..Math.Min(ex.StackTrace.Length, 2000)] });
+    }));
+
     // Middleware pipeline
     app.UseMiddleware<CorrelationIdMiddleware>();
     app.UseSerilogRequestLogging();
