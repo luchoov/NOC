@@ -270,6 +270,65 @@ export interface UpdateSegmentRequest {
   rules?: SegmentRule[] | null;
 }
 
+// ── Campaigns ───────────────────────────────────────────────────────────
+
+export interface CampaignResponse {
+  id: string;
+  inboxId: string;
+  inboxName: string;
+  name: string;
+  status: CampaignStatus;
+  messageTemplate: string;
+  mediaUrl: string | null;
+  scheduledAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  pausedAt: string | null;
+  pausedReason: string | null;
+  messagesPerMinute: number;
+  totalRecipients: number;
+  sentCount: number;
+  deliveredCount: number;
+  readCount: number;
+  failedCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCampaignRequest {
+  inboxId: string;
+  name: string;
+  messageTemplate: string;
+  mediaUrl?: string | null;
+  messagesPerMinute?: number;
+  delayMinMs?: number;
+  delayMaxMs?: number;
+  scheduledAt?: string | null;
+  contactListId?: string | null;
+  segmentId?: string | null;
+  contactIds?: string[] | null;
+}
+
+export interface UpdateCampaignRequest {
+  name?: string;
+  messageTemplate?: string;
+  messagesPerMinute?: number;
+  scheduledAt?: string | null;
+}
+
+export interface CampaignRecipientResponse {
+  id: string;
+  contactId: string;
+  phone: string;
+  contactName: string | null;
+  status: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedAt: string | null;
+  failureReason: string | null;
+}
+
 // ── Inboxes ──────────────────────────────────────────────────────────────
 
 export interface InboxResponse {

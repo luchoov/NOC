@@ -54,6 +54,12 @@ public class SignalRBridge(
                             await hub.Clients.Group($"inbox:{evt.InboxId}")
                                 .SendAsync("ConversationStatusChanged", evt.ConversationId, evt.Status, stoppingToken);
                         break;
+
+                    case "CampaignProgress":
+                        // Broadcast to all authenticated clients (single-tenant)
+                        await hub.Clients.All
+                            .SendAsync("CampaignProgress", evt.CampaignId, evt.Payload, stoppingToken);
+                        break;
                 }
 
                 logger.LogDebug("Forwarded SignalR event {Event} for conversation {ConversationId}", evt.Event, evt.ConversationId);
@@ -83,6 +89,7 @@ public class SignalREvent
     public string Event { get; set; } = "";
     public string? InboxId { get; set; }
     public string? ConversationId { get; set; }
+    public string? CampaignId { get; set; }
     public string? AgentId { get; set; }
     public string? Status { get; set; }
     public JsonElement? Payload { get; set; }
