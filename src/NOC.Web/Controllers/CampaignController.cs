@@ -51,71 +51,78 @@ public class CampaignController(NocDbContext db, AuditService auditService) : Co
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateCampaignRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(new { message = "Name is required" });
-        if (string.IsNullOrWhiteSpace(request.MessageTemplate))
-            return BadRequest(new { message = "MessageTemplate is required" });
-
-        var inbox = await db.Inboxes.AsNoTracking().FirstOrDefaultAsync(i => i.Id == request.InboxId);
-        if (inbox is null)
-            return BadRequest(new { message = "Inbox not found" });
-        if (!inbox.IsActive)
-            return BadRequest(new { message = "Inbox is not active" });
-
-        // Resolve audience
-        var audienceCount = (request.ContactListId.HasValue ? 1 : 0)
-            + (request.SegmentId.HasValue ? 1 : 0)
-            + (request.ContactIds is { Count: > 0 } ? 1 : 0);
-        if (audienceCount != 1)
-            return BadRequest(new { message = "Provide exactly one audience source: contactListId, segmentId, or contactIds" });
-
-        var contacts = await ResolveAudienceAsync(request);
-        if (contacts.Count == 0)
-            return BadRequest(new { message = "Audience resolved to 0 contacts with phone numbers" });
-
-        var now = DateTimeOffset.UtcNow;
-        var campaign = new Campaign
+        try
         {
-            Id = Guid.CreateVersion7(),
-            InboxId = request.InboxId,
-            Name = request.Name.Trim(),
-            MessageTemplate = request.MessageTemplate.Trim(),
-            MediaUrl = request.MediaUrl?.Trim(),
-            MessagesPerMinute = request.MessagesPerMinute ?? 10,
-            DelayMinMs = request.DelayMinMs ?? 2000,
-            DelayMaxMs = request.DelayMaxMs ?? 8000,
-            SendWindowStart = request.SendWindowStart,
-            SendWindowEnd = request.SendWindowEnd,
-            SendWindowTz = request.SendWindowTz?.Trim(),
-            ScheduledAt = request.ScheduledAt,
-            Status = CampaignStatus.DRAFT,
-            TotalRecipients = contacts.Count,
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
+            if (string.IsNullOrWhiteSpace(request.Name))
+                return BadRequest(new { message = "Name is required" });
+            if (string.IsNullOrWhiteSpace(request.MessageTemplate))
+                return BadRequest(new { message = "MessageTemplate is required" });
 
-        // Materialize recipients
-        var recipients = contacts.Select(c => new CampaignRecipient
+            var inbox = await db.Inboxes.AsNoTracking().FirstOrDefaultAsync(i => i.Id == request.InboxId);
+            if (inbox is null)
+                return BadRequest(new { message = "Inbox not found" });
+            if (!inbox.IsActive)
+                return BadRequest(new { message = "Inbox is not active" });
+
+            // Resolve audience
+            var audienceCount = (request.ContactListId.HasValue ? 1 : 0)
+                + (request.SegmentId.HasValue ? 1 : 0)
+                + (request.ContactIds is { Count: > 0 } ? 1 : 0);
+            if (audienceCount != 1)
+                return BadRequest(new { message = "Provide exactly one audience source: contactListId, segmentId, or contactIds" });
+
+            var contacts = await ResolveAudienceAsync(request);
+            if (contacts.Count == 0)
+                return BadRequest(new { message = "Audience resolved to 0 contacts with phone numbers" });
+
+            var now = DateTimeOffset.UtcNow;
+            var campaign = new Campaign
+            {
+                Id = Guid.CreateVersion7(),
+                InboxId = request.InboxId,
+                Name = request.Name.Trim(),
+                MessageTemplate = request.MessageTemplate.Trim(),
+                MediaUrl = request.MediaUrl?.Trim(),
+                MessagesPerMinute = request.MessagesPerMinute ?? 10,
+                DelayMinMs = request.DelayMinMs ?? 2000,
+                DelayMaxMs = request.DelayMaxMs ?? 8000,
+                SendWindowStart = request.SendWindowStart,
+                SendWindowEnd = request.SendWindowEnd,
+                SendWindowTz = request.SendWindowTz?.Trim(),
+                ScheduledAt = request.ScheduledAt,
+                Status = CampaignStatus.DRAFT,
+                TotalRecipients = contacts.Count,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+
+            // Materialize recipients
+            var recipients = contacts.Select(c => new CampaignRecipient
+            {
+                Id = Guid.CreateVersion7(),
+                CampaignId = campaign.Id,
+                ContactId = c.Id,
+                Phone = c.Phone!,
+                Status = "QUEUED",
+            }).ToList();
+
+            db.Campaigns.Add(campaign);
+            db.CampaignRecipients.AddRange(recipients);
+            await db.SaveChangesAsync();
+
+            await auditService.LogAsync(
+                "CAMPAIGN_CREATED",
+                entityType: "CAMPAIGN",
+                entityId: campaign.Id,
+                payload: new { campaign.Name, campaign.TotalRecipients });
+
+            campaign.Inbox = inbox;
+            return CreatedAtAction(nameof(GetById), new { id = campaign.Id }, MapToResponse(campaign));
+        }
+        catch (Exception ex)
         {
-            Id = Guid.CreateVersion7(),
-            CampaignId = campaign.Id,
-            ContactId = c.Id,
-            Phone = c.Phone,
-            Status = "QUEUED",
-        }).ToList();
-
-        db.Campaigns.Add(campaign);
-        db.CampaignRecipients.AddRange(recipients);
-        await db.SaveChangesAsync();
-
-        await auditService.LogAsync(
-            "CAMPAIGN_CREATED",
-            entityType: "CAMPAIGN",
-            entityId: campaign.Id,
-            payload: new { campaign.Name, campaign.TotalRecipients });
-
-        campaign.Inbox = inbox;
-        return CreatedAtAction(nameof(GetById), new { id = campaign.Id }, MapToResponse(campaign));
+            return StatusCode(500, new { error = ex.GetType().Name, message = ex.Message, inner = ex.InnerException?.Message });
+        }
     }
 
     [HttpPut("{id:guid}")]
