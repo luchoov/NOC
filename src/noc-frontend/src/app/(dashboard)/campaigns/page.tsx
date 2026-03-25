@@ -11,6 +11,7 @@ import type { CampaignResponse, CampaignStatus } from '@/types/api';
 import { CampaignCard } from '@/components/campaigns/campaign-card';
 import { CampaignCreateModal } from '@/components/campaigns/campaign-create-modal';
 import { CampaignDetailModal } from '@/components/campaigns/campaign-detail-modal';
+import { useCampaignUpdates } from '@/lib/signalr/hooks';
 import { cn } from '@/lib/utils';
 
 type Filter = 'all' | CampaignStatus;
@@ -47,13 +48,32 @@ export default function CampaignsPage() {
     fetchCampaigns();
   }, [fetchCampaigns]);
 
-  // Auto-refresh while any campaign is running
+  // Auto-refresh while any campaign is running (fallback for when SignalR is unavailable)
   useEffect(() => {
     const hasRunning = campaigns.some((c) => c.status === 'RUNNING');
     if (!hasRunning) return;
-    const interval = setInterval(fetchCampaigns, 5000);
+    const interval = setInterval(fetchCampaigns, 8000);
     return () => clearInterval(interval);
   }, [campaigns, fetchCampaigns]);
+
+  // Real-time updates via SignalR
+  useCampaignUpdates({
+    onCampaignProgress: (campaignId, payload) => {
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.id === campaignId
+            ? { ...c, status: payload.status as CampaignStatus, sentCount: payload.sentCount, deliveredCount: payload.deliveredCount, readCount: payload.readCount, failedCount: payload.failedCount, totalRecipients: payload.totalRecipients }
+            : c,
+        ),
+      );
+      // Also update detail modal if open
+      setDetailCampaign((prev) =>
+        prev?.id === campaignId
+          ? { ...prev, status: payload.status as CampaignStatus, sentCount: payload.sentCount, deliveredCount: payload.deliveredCount, readCount: payload.readCount, failedCount: payload.failedCount, totalRecipients: payload.totalRecipients }
+          : prev,
+      );
+    },
+  });
 
   const filteredCampaigns = useMemo(
     () => filter === 'all' ? campaigns : campaigns.filter((c) => c.status === filter),

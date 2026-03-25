@@ -110,6 +110,40 @@ export function useInboxUpdates(
   }, [idsKey, ready]);
 }
 
+export interface CampaignProgressPayload {
+  status: string;
+  totalRecipients: number;
+  sentCount: number;
+  deliveredCount: number;
+  readCount: number;
+  failedCount: number;
+}
+
+export function useCampaignUpdates(
+  callbacks: {
+    onCampaignProgress?: (campaignId: string, payload: CampaignProgressPayload) => void;
+  },
+) {
+  const cbRef = useRef(callbacks);
+  cbRef.current = callbacks;
+
+  const ready = useHubReady();
+
+  useEffect(() => {
+    const conn = getConnection();
+    if (!conn) return;
+
+    const onProgress = (campaignId: string, payload: CampaignProgressPayload) =>
+      cbRef.current.onCampaignProgress?.(campaignId, payload);
+
+    conn.on('CampaignProgress', onProgress);
+
+    return () => {
+      conn.off('CampaignProgress', onProgress);
+    };
+  }, [ready]);
+}
+
 export function useConversationUpdates(
   conversationId: string | null,
   callbacks: {
