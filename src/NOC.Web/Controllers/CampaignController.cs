@@ -249,6 +249,59 @@ public class CampaignController(NocDbContext db, AuditService auditService) : Co
         return Ok(MapToResponse(campaign));
     }
 
+    [HttpPost("{id:guid}/duplicate")]
+    public async Task<IActionResult> Duplicate(Guid id)
+    {
+        var source = await db.Campaigns.AsNoTracking().Include(c => c.Inbox)
+            .FirstOrDefaultAsync(c => c.Id == id);
+        if (source is null)
+            return NotFound(new { message = "Campaign not found" });
+
+        var now = DateTimeOffset.UtcNow;
+        var campaign = new Campaign
+        {
+            Id = Guid.CreateVersion7(),
+            InboxId = source.InboxId,
+            Name = $"{source.Name} (copia)",
+            MessageTemplate = source.MessageTemplate,
+            MediaUrl = source.MediaUrl,
+            MessagesPerMinute = source.MessagesPerMinute,
+            DelayMinMs = source.DelayMinMs,
+            DelayMaxMs = source.DelayMaxMs,
+            SendWindowStart = source.SendWindowStart,
+            SendWindowEnd = source.SendWindowEnd,
+            SendWindowTz = source.SendWindowTz,
+            Status = CampaignStatus.DRAFT,
+            TotalRecipients = 0,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        // Copy recipients
+        var sourceRecipients = await db.CampaignRecipients
+            .AsNoTracking()
+            .Where(r => r.CampaignId == id)
+            .Select(r => new { r.ContactId, r.Phone })
+            .ToListAsync();
+
+        var recipients = sourceRecipients.Select(r => new CampaignRecipient
+        {
+            Id = Guid.CreateVersion7(),
+            CampaignId = campaign.Id,
+            ContactId = r.ContactId,
+            Phone = r.Phone,
+            Status = "QUEUED",
+        }).ToList();
+
+        campaign.TotalRecipients = recipients.Count;
+        db.Campaigns.Add(campaign);
+        db.CampaignRecipients.AddRange(recipients);
+        await db.SaveChangesAsync();
+
+        campaign.Inbox = source.Inbox;
+        return CreatedAtAction(nameof(GetById), new { id = campaign.Id }, MapToResponse(campaign));
+    }
+
     [HttpGet("{id:guid}/recipients")]
     public async Task<IActionResult> ListRecipients(Guid id, [FromQuery] string? status = null, [FromQuery] int limit = 100)
     {
@@ -290,14 +343,14 @@ public class CampaignController(NocDbContext db, AuditService auditService) : Co
     {
         if (request.ContactListId.HasValue)
         {
-            return await db.ContactListMembers
+            var rows = await db.ContactListMembers
                 .AsNoTracking()
                 .Where(m => m.ContactListId == request.ContactListId.Value)
                 .Select(m => new { m.Contact.Id, m.Contact.Phone })
                 .Where(c => c.Phone != null && c.Phone != "")
                 .Distinct()
-                .Select(c => ValueTuple.Create(c.Id, c.Phone))
                 .ToListAsync();
+            return rows.Select(c => (c.Id, c.Phone)).ToList();
         }
 
         if (request.SegmentId.HasValue)
@@ -306,19 +359,21 @@ public class CampaignController(NocDbContext db, AuditService auditService) : Co
             if (segment is null) return [];
 
             var rules = ParseSegmentRules(segment.Rules);
-            return await ApplySegmentRules(db.Contacts.AsNoTracking(), rules)
+            var rows = await ApplySegmentRules(db.Contacts.AsNoTracking(), rules)
                 .Where(c => c.Phone != null && c.Phone != "")
-                .Select(c => ValueTuple.Create(c.Id, c.Phone))
+                .Select(c => new { c.Id, c.Phone })
                 .ToListAsync();
+            return rows.Select(c => (c.Id, c.Phone)).ToList();
         }
 
         if (request.ContactIds is { Count: > 0 })
         {
-            return await db.Contacts
+            var rows = await db.Contacts
                 .AsNoTracking()
                 .Where(c => request.ContactIds.Contains(c.Id) && c.Phone != null && c.Phone != "")
-                .Select(c => ValueTuple.Create(c.Id, c.Phone))
+                .Select(c => new { c.Id, c.Phone })
                 .ToListAsync();
+            return rows.Select(c => (c.Id, c.Phone)).ToList();
         }
 
         return [];

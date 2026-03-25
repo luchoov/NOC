@@ -49,6 +49,10 @@ export function scheduleCampaign(id: string, scheduledAt: string) {
   return api.post<CampaignResponse>(`/api/campaigns/${id}/schedule`, { scheduledAt });
 }
 
+export function duplicateCampaign(id: string) {
+  return api.post<CampaignResponse>(`/api/campaigns/${id}/duplicate`);
+}
+
 export function listCampaignRecipients(id: string, params?: { status?: string; limit?: number }) {
   return api.get<CampaignRecipientResponse[]>(`/api/campaigns/${id}/recipients${qs(params ?? {})}`);
 }
