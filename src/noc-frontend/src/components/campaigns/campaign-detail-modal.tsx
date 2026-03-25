@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import type { CampaignResponse, CampaignRecipientResponse } from '@/types/api';
 import { getCampaign, startCampaign, pauseCampaign, resumeCampaign, cancelCampaign, listCampaignRecipients } from '@/lib/api/campaigns';
 import { CampaignStatusBadge } from './campaign-status-badge';
-import { timeAgo } from '@/lib/utils';
+import { timeAgo } from '@/lib/utils/format-date';
 
 interface CampaignDetailModalProps {
   campaign: CampaignResponse | null;

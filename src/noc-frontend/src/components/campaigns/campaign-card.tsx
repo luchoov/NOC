@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import type { CampaignResponse } from '@/types/api';
 import { CampaignStatusBadge } from './campaign-status-badge';
 import { deleteCampaign } from '@/lib/api/campaigns';
-import { timeAgo } from '@/lib/utils';
+import { timeAgo } from '@/lib/utils/format-date';
 
 interface CampaignCardProps {
   campaign: CampaignResponse;
