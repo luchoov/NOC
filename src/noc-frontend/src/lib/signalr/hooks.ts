@@ -55,6 +55,16 @@ export function useSignalR() {
   return status;
 }
 
+export interface MessageStatusUpdatePayload {
+  messageId: string;
+  deliveryStatus: string;
+}
+
+export interface PresenceUpdatePayload {
+  phone: string;
+  presence: string; // "composing" | "paused" | "available" | "unavailable"
+}
+
 export function useInboxUpdates(
   inboxIds: string[],
   callbacks: {
@@ -63,6 +73,8 @@ export function useInboxUpdates(
     onConversationStatusChanged?: (conversationId: string, newStatus: string) => void;
     onInboxBanSuspected?: (inboxId: string, inboxName: string) => void;
     onSessionDisconnected?: (inboxId: string, instanceName: string) => void;
+    onMessageStatusUpdate?: (conversationId: string, payload: MessageStatusUpdatePayload) => void;
+    onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
   },
 ) {
   const cbRef = useRef(callbacks);
@@ -89,12 +101,16 @@ export function useInboxUpdates(
     const onStatus = (cId: string, s: string) => cbRef.current.onConversationStatusChanged?.(cId, s);
     const onBan = (iId: string, n: string) => cbRef.current.onInboxBanSuspected?.(iId, n);
     const onDisc = (iId: string, n: string) => cbRef.current.onSessionDisconnected?.(iId, n);
+    const onMsgStatus = (cId: string, p: MessageStatusUpdatePayload) => cbRef.current.onMessageStatusUpdate?.(cId, p);
+    const onPresence = (p: PresenceUpdatePayload) => cbRef.current.onPresenceUpdate?.(p);
 
     conn.on('MessageReceived', onMsg);
     conn.on('ConversationAssigned', onAssign);
     conn.on('ConversationStatusChanged', onStatus);
     conn.on('InboxBanSuspected', onBan);
     conn.on('SessionDisconnected', onDisc);
+    conn.on('MessageStatusUpdate', onMsgStatus);
+    conn.on('PresenceUpdate', onPresence);
 
     return () => {
       for (const id of inboxIds) {
@@ -105,6 +121,8 @@ export function useInboxUpdates(
       conn.off('ConversationStatusChanged', onStatus);
       conn.off('InboxBanSuspected', onBan);
       conn.off('SessionDisconnected', onDisc);
+      conn.off('MessageStatusUpdate', onMsgStatus);
+      conn.off('PresenceUpdate', onPresence);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey, ready]);
@@ -148,6 +166,7 @@ export function useConversationUpdates(
   conversationId: string | null,
   callbacks: {
     onMessageReceived?: (conversationId: string, message: MessageResponse) => void;
+    onMessageStatusUpdate?: (conversationId: string, payload: MessageStatusUpdatePayload) => void;
   },
 ) {
   const cbRef = useRef(callbacks);
@@ -163,11 +182,14 @@ export function useConversationUpdates(
     joinConversation(conversationId).catch(() => {});
 
     const onMsg = (cId: string, m: MessageResponse) => cbRef.current.onMessageReceived?.(cId, m);
+    const onMsgStatus = (cId: string, p: MessageStatusUpdatePayload) => cbRef.current.onMessageStatusUpdate?.(cId, p);
     conn.on('MessageReceived', onMsg);
+    conn.on('MessageStatusUpdate', onMsgStatus);
 
     return () => {
       leaveConversation(conversationId).catch(() => {});
       conn.off('MessageReceived', onMsg);
+      conn.off('MessageStatusUpdate', onMsgStatus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, ready]);

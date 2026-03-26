@@ -38,6 +38,9 @@ public class InboxController(
     private static readonly string[] EvolutionWebhookEvents =
     [
         "MESSAGES_UPSERT",
+        "MESSAGES_UPDATE",
+        "SEND_MESSAGE",
+        "PRESENCE_UPDATE",
         "CONNECTION_UPDATE",
         "QRCODE_UPDATED",
     ];

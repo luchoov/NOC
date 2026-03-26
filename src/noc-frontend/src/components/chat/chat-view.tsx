@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { listMessages } from '@/lib/api/messages';
-import { useConversationUpdates } from '@/lib/signalr/hooks';
+import { useConversationUpdates, useInboxUpdates } from '@/lib/signalr/hooks';
 import type { ConversationResponse, MessageResponse } from '@/types/api';
 import { ChatHeader } from './chat-header';
 import { MessageBubble } from './message-bubble';
@@ -26,6 +26,8 @@ export function ChatView({ conversation, onToggleContactPanel, onConversationUpd
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [isTyping, setIsTyping] = useState(false);
+  const typingTimeout = useRef<ReturnType<typeof setTimeout>>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevConvId = useRef<string | null>(null);
@@ -104,11 +106,29 @@ export function ChatView({ conversation, onToggleContactPanel, onConversationUpd
       prevConvId.current = conversation.id;
       setMessages([]);
       setHasMore(true);
+      setIsTyping(false);
       isNearBottom.current = true;
       fetchMessages(conversation.id, false, []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id]);
+
+  // Presence updates (typing indicator)
+  const inboxIds = conversation.inboxId ? [conversation.inboxId] : [];
+  useInboxUpdates(inboxIds, {
+    onPresenceUpdate: (payload) => {
+      // Check if this presence update is for the current contact
+      if (conversation.contactPhone && payload.phone === conversation.contactPhone.replace(/\D/g, '')) {
+        if (payload.presence === 'composing') {
+          setIsTyping(true);
+          if (typingTimeout.current) clearTimeout(typingTimeout.current);
+          typingTimeout.current = setTimeout(() => setIsTyping(false), 5000);
+        } else {
+          setIsTyping(false);
+        }
+      }
+    },
+  });
 
   // Auto-scroll to bottom ONLY for initial load and new messages (not history prepend)
   useEffect(() => {
@@ -129,6 +149,16 @@ export function ChatView({ conversation, onToggleContactPanel, onConversationUpd
         if (prev.some((m) => m.id === message.id)) return prev;
         return [...prev, message];
       });
+    },
+    onMessageStatusUpdate: (cId, payload) => {
+      if (cId !== conversation.id) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === payload.messageId
+            ? { ...m, deliveryStatus: payload.deliveryStatus }
+            : m,
+        ),
+      );
     },
   });
 
@@ -203,6 +233,12 @@ export function ChatView({ conversation, onToggleContactPanel, onConversationUpd
 
         <div ref={bottomRef} />
       </div>
+
+      {isTyping && (
+        <div className="px-4 py-1">
+          <span className="text-xs text-zinc-500 italic animate-pulse">escribiendo...</span>
+        </div>
+      )}
 
       <MessageInput conversationId={conversation.id} onSent={handleMessageSent} />
     </div>

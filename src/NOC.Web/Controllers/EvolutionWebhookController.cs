@@ -28,6 +28,7 @@ public class EvolutionWebhookController(
 {
     private const string MessagingIncomingStream = "stream:messaging:incoming";
     private const string StatusUpdatesStream = "stream:status:updates";
+    private const string ReceiptsStream = "stream:status:receipts";
     private const string WebhookTokenQueryKey = "token";
     private const string WebhookTokenHeader = "X-Noc-Webhook-Token";
 
@@ -44,6 +45,9 @@ public class EvolutionWebhookController(
         return normalizedEvent switch
         {
             "messages-upsert" or "messages-set" => await ReceiveMessageInternal(inboxId, payload),
+            "messages-update" => await ReceiveReceiptInternal(inboxId, payload),
+            "send-message" => await ReceiveSendMessageInternal(inboxId, payload),
+            "presence-update" => await ReceivePresenceInternal(inboxId, payload),
             "connection-update" or "qrcode-updated" => await ReceiveStatusInternal(inboxId, payload),
             _ => Ok(new { status = "ignored", inboxId, eventType = normalizedEvent ?? "unknown" }),
         };
@@ -130,6 +134,132 @@ public class EvolutionWebhookController(
         await db.SaveChangesAsync();
 
         return Ok(new { status = "accepted", inboxId, normalizedStatus });
+    }
+
+    /// <summary>
+    /// Handles messages-update (delivery receipts: sent, delivered, read).
+    /// Evolution API status codes: 2=SENT, 3=DELIVERED, 4=READ, 5=PLAYED
+    /// </summary>
+    private async Task<IActionResult> ReceiveReceiptInternal(Guid inboxId, JsonElement payload)
+    {
+        var inbox = await GetValidUnofficialInboxAsync(inboxId);
+        if (inbox is null)
+            return NotFound(new { message = "Inbox not found or not unofficial WhatsApp." });
+
+        // data can be a single object or array
+        var dataElement = payload.TryGetProperty("data", out var data) ? data : payload;
+        var items = dataElement.ValueKind == JsonValueKind.Array
+            ? dataElement.EnumerateArray().ToList()
+            : [dataElement];
+
+        var enqueued = 0;
+        foreach (var item in items)
+        {
+            var externalId = TryGetPath(item, "key", "id");
+            var statusCodeStr = TryGetPath(item, "update", "status");
+            var remoteJid = TryGetPath(item, "key", "remoteJid");
+
+            if (string.IsNullOrWhiteSpace(externalId) || string.IsNullOrWhiteSpace(statusCodeStr))
+                continue;
+
+            if (!int.TryParse(statusCodeStr, out var statusCode) || statusCode < 2)
+                continue;
+
+            var dedupKey = $"dedup:evolution:receipt:{inboxId}:{externalId}:{statusCode}";
+            if (!await TryAcquireDedupAsync(dedupKey, TimeSpan.FromHours(1)))
+                continue;
+
+            outboxWriter.Enqueue(ReceiptsStream, new EvolutionReceiptWebhookReceivedEvent
+            {
+                EventType = "EVOLUTION_RECEIPT_WEBHOOK_RECEIVED",
+                CorrelationId = HttpContext.TraceIdentifier,
+                InboxId = inboxId,
+                ExternalId = externalId,
+                StatusCode = statusCode,
+                RemoteJid = remoteJid,
+                InstanceName = inbox.EvolutionInstanceName,
+            });
+            enqueued++;
+        }
+
+        if (enqueued > 0)
+            await db.SaveChangesAsync();
+
+        return Ok(new { status = "accepted", inboxId, receiptsEnqueued = enqueued });
+    }
+
+    /// <summary>
+    /// Handles send-message (messages sent from the phone, not from NOC).
+    /// Enqueues as a regular message event with fromPhone flag for the worker to handle.
+    /// </summary>
+    private async Task<IActionResult> ReceiveSendMessageInternal(Guid inboxId, JsonElement payload)
+    {
+        var inbox = await GetValidUnofficialInboxAsync(inboxId);
+        if (inbox is null)
+            return NotFound(new { message = "Inbox not found or not unofficial WhatsApp." });
+
+        var payloadRaw = payload.GetRawText();
+        var externalId = ExtractExternalId(payload) ?? ComputePayloadFingerprint(payloadRaw);
+        var dedupKey = $"dedup:evolution:send:{inboxId}:{externalId}";
+
+        if (!await TryAcquireDedupAsync(dedupKey, TimeSpan.FromHours(24)))
+            return Ok(new { status = "duplicate_ignored", inboxId, externalId });
+
+        var webhookEvent = new EvolutionMessageWebhookReceivedEvent
+        {
+            EventType = "EVOLUTION_SEND_MESSAGE_WEBHOOK_RECEIVED",
+            CorrelationId = HttpContext.TraceIdentifier,
+            InboxId = inboxId,
+            ExternalId = externalId,
+            InstanceName = inbox.EvolutionInstanceName,
+            RawPayload = payloadRaw,
+        };
+
+        outboxWriter.Enqueue(MessagingIncomingStream, webhookEvent);
+        await db.SaveChangesAsync();
+
+        return Ok(new { status = "accepted", inboxId, externalId });
+    }
+
+    /// <summary>
+    /// Handles presence-update (typing indicators).
+    /// Published directly to SignalR without persistence.
+    /// </summary>
+    private async Task<IActionResult> ReceivePresenceInternal(Guid inboxId, JsonElement payload)
+    {
+        var remoteJid = TryGetPath(payload, "data", "id")
+            ?? TryGetPath(payload, "id");
+        var presenceStatus = TryGetPath(payload, "data", "presences", remoteJid ?? "", "lastKnownPresence")
+            ?? TryGetPath(payload, "data", "status")
+            ?? TryGetPath(payload, "presences", remoteJid ?? "", "lastKnownPresence");
+
+        if (string.IsNullOrWhiteSpace(remoteJid))
+            return Ok(new { status = "ignored", reason = "no_remote_jid" });
+
+        // Extract phone from JID (e.g. "5491134567890@s.whatsapp.net" → "5491134567890")
+        var phone = remoteJid.Split('@')[0];
+
+        try
+        {
+            var redisDb = redis.GetDatabase();
+            var eventPayload = JsonSerializer.Serialize(new
+            {
+                Event = "PresenceUpdate",
+                InboxId = inboxId.ToString(),
+                Payload = new
+                {
+                    phone,
+                    presence = presenceStatus ?? "unavailable",
+                }
+            });
+            await redisDb.PublishAsync(RedisChannel.Literal("signalr:events"), eventPayload);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to publish presence update via Redis");
+        }
+
+        return Ok(new { status = "accepted", inboxId, phone, presence = presenceStatus });
     }
 
     private static string? NormalizeEventSlug(string? routeEventSlug, JsonElement payload)

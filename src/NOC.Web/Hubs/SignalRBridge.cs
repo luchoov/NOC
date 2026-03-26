@@ -60,6 +60,21 @@ public class SignalRBridge(
                         await hub.Clients.All
                             .SendAsync("CampaignProgress", evt.CampaignId, evt.Payload, stoppingToken);
                         break;
+
+                    case "MessageStatusUpdate":
+                        if (evt.ConversationId is not null)
+                            await hub.Clients.Group($"conversation:{evt.ConversationId}")
+                                .SendAsync("MessageStatusUpdate", evt.ConversationId, evt.Payload, stoppingToken);
+                        if (evt.InboxId is not null)
+                            await hub.Clients.Group($"inbox:{evt.InboxId}")
+                                .SendAsync("MessageStatusUpdate", evt.ConversationId, evt.Payload, stoppingToken);
+                        break;
+
+                    case "PresenceUpdate":
+                        if (evt.InboxId is not null)
+                            await hub.Clients.Group($"inbox:{evt.InboxId}")
+                                .SendAsync("PresenceUpdate", evt.Payload, stoppingToken);
+                        break;
                 }
 
                 logger.LogDebug("Forwarded SignalR event {Event} for conversation {ConversationId}", evt.Event, evt.ConversationId);

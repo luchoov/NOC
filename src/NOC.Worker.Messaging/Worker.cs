@@ -25,6 +25,7 @@ public class Worker(
     ILogger<Worker> logger) : BackgroundService
 {
     private const string StreamName = "stream:messaging:incoming";
+    private const string ReceiptsStreamName = "stream:status:receipts";
     private const string ConsumerGroupName = "messaging-workers";
 
     private readonly string _consumerName = $"worker-{Environment.MachineName}-{Guid.NewGuid():N}"[..32];
@@ -34,35 +35,43 @@ public class Worker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var redisDb = redis.GetDatabase();
-        await EnsureConsumerGroupAsync(redisDb);
+        await EnsureConsumerGroupAsync(redisDb, StreamName);
+        await EnsureConsumerGroupAsync(redisDb, ReceiptsStreamName);
 
         try { await mediaStorage.EnsureBucketAsync(); }
         catch (Exception ex) { logger.LogWarning(ex, "Failed to ensure MinIO bucket on startup"); }
 
         logger.LogInformation(
-            "Messaging worker started. Stream={Stream}, Group={Group}, Consumer={Consumer}, ReopenWindowHours={ReopenWindowHours}",
-            StreamName,
-            ConsumerGroupName,
+            "Messaging worker started. Consumer={Consumer}, ReopenWindowHours={ReopenWindowHours}",
             _consumerName,
             _reopenWindowHours);
 
-        while (!stoppingToken.IsCancellationRequested)
+        // Run both consumer loops concurrently
+        await Task.WhenAll(
+            ConsumeStreamAsync(redisDb, StreamName, ProcessEntryAsync, stoppingToken),
+            ConsumeStreamAsync(redisDb, ReceiptsStreamName, ProcessReceiptEntryAsync, stoppingToken));
+    }
+
+    private async Task ConsumeStreamAsync(IDatabase redisDb, string stream,
+        Func<StreamEntry, CancellationToken, Task> handler, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
         {
             StreamEntry[] entries;
             try
             {
-                entries = await redisDb.StreamReadGroupAsync(StreamName, ConsumerGroupName, _consumerName, ">", count: 20);
+                entries = await redisDb.StreamReadGroupAsync(stream, ConsumerGroupName, _consumerName, ">", count: 20);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.LogError(ex, "Failed to read from Redis stream {Stream}", StreamName);
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                logger.LogError(ex, "Failed to read from Redis stream {Stream}", stream);
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
                 continue;
             }
 
             if (entries.Length == 0)
             {
-                await Task.Delay(_pollDelay, stoppingToken);
+                await Task.Delay(_pollDelay, ct);
                 continue;
             }
 
@@ -70,32 +79,31 @@ public class Worker(
             {
                 try
                 {
-                    await ProcessEntryAsync(entry, stoppingToken);
-                    await redisDb.StreamAcknowledgeAsync(StreamName, ConsumerGroupName, entry.Id);
+                    await handler(entry, ct);
+                    await redisDb.StreamAcknowledgeAsync(stream, ConsumerGroupName, entry.Id);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    logger.LogError(ex, "Failed processing stream entry {EntryId}", entry.Id);
-                    // Ack to prevent poison-message loops for now.
-                    await redisDb.StreamAcknowledgeAsync(StreamName, ConsumerGroupName, entry.Id);
+                    logger.LogError(ex, "Failed processing stream entry {EntryId} from {Stream}", entry.Id, stream);
+                    await redisDb.StreamAcknowledgeAsync(stream, ConsumerGroupName, entry.Id);
                 }
             }
         }
     }
 
-    private async Task EnsureConsumerGroupAsync(IDatabase redisDb)
+    private async Task EnsureConsumerGroupAsync(IDatabase redisDb, string stream)
     {
         try
         {
             await redisDb.StreamCreateConsumerGroupAsync(
-                key: StreamName,
+                key: stream,
                 groupName: ConsumerGroupName,
                 position: "0-0",
                 createStream: true);
         }
         catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP", StringComparison.OrdinalIgnoreCase))
         {
-            logger.LogDebug("Consumer group {Group} already exists for stream {Stream}", ConsumerGroupName, StreamName);
+            logger.LogDebug("Consumer group {Group} already exists for stream {Stream}", ConsumerGroupName, stream);
         }
     }
 
@@ -123,7 +131,41 @@ public class Worker(
             return;
         }
 
+        // Check if this is a send-message event (sent from phone)
+        if (webhookEvent.EventType == "EVOLUTION_SEND_MESSAGE_WEBHOOK_RECEIVED")
+        {
+            await HandleSendMessageWebhookAsync(webhookEvent, ct);
+            return;
+        }
+
         await HandleIncomingWebhookAsync(webhookEvent, ct);
+    }
+
+    private async Task ProcessReceiptEntryAsync(StreamEntry entry, CancellationToken ct)
+    {
+        var type = entry.Values.FirstOrDefault(v => v.Name == "type").Value.ToString();
+        var payload = entry.Values.FirstOrDefault(v => v.Name == "payload").Value.ToString();
+
+        if (string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(payload))
+        {
+            logger.LogWarning("Receipt stream entry {EntryId} missing type or payload", entry.Id);
+            return;
+        }
+
+        if (!string.Equals(type, nameof(EvolutionReceiptWebhookReceivedEvent), StringComparison.Ordinal))
+        {
+            logger.LogDebug("Ignoring unsupported receipt event type {EventType}", type);
+            return;
+        }
+
+        var receiptEvent = JsonSerializer.Deserialize<EvolutionReceiptWebhookReceivedEvent>(payload);
+        if (receiptEvent is null)
+        {
+            logger.LogWarning("Could not deserialize receipt payload for entry {EntryId}", entry.Id);
+            return;
+        }
+
+        await HandleReceiptAsync(receiptEvent, ct);
     }
 
     private async Task HandleIncomingWebhookAsync(EvolutionMessageWebhookReceivedEvent evt, CancellationToken ct)
@@ -812,6 +854,220 @@ public class Worker(
             return null;
 
         return value.TryGetValue<string>(out var result) ? result : null;
+    }
+
+    // ── Receipt handling (delivery/read status updates) ──────────────────
+
+    private async Task HandleReceiptAsync(EvolutionReceiptWebhookReceivedEvent evt, CancellationToken ct)
+    {
+        var deliveryStatus = evt.StatusCode switch
+        {
+            2 => DeliveryStatus.SENT,
+            3 => DeliveryStatus.DELIVERED,
+            4 or 5 => DeliveryStatus.READ, // 5 = PLAYED (audio/video)
+            _ => (DeliveryStatus?)null,
+        };
+
+        if (deliveryStatus is null)
+        {
+            logger.LogDebug("Ignoring unknown receipt status code {StatusCode} for {ExternalId}", evt.StatusCode, evt.ExternalId);
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NocDbContext>();
+
+        var message = await db.Messages
+            .Include(m => m.Conversation)
+            .FirstOrDefaultAsync(m => m.ExternalId == evt.ExternalId, ct);
+
+        if (message is null)
+        {
+            logger.LogDebug("No message found for ExternalId={ExternalId}, ignoring receipt", evt.ExternalId);
+            return;
+        }
+
+        // Only update if status is "more advanced" (SENT < DELIVERED < READ)
+        if (message.DeliveryStatus.HasValue && message.DeliveryStatus.Value >= deliveryStatus.Value)
+        {
+            logger.LogDebug("Message {MessageId} already at {CurrentStatus}, ignoring {NewStatus}",
+                message.Id, message.DeliveryStatus, deliveryStatus);
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        message.DeliveryStatus = deliveryStatus.Value;
+        message.DeliveryUpdatedAt = now;
+
+        // Create audit trail
+        db.MessageStatusEvents.Add(new MessageStatusEvent
+        {
+            Id = Guid.CreateVersion7(),
+            MessageId = message.Id,
+            Status = deliveryStatus.Value,
+            ProviderCode = evt.StatusCode.ToString(),
+            OccurredAt = now,
+        });
+
+        // Update campaign recipient if this is a campaign message
+        var campaignRecipient = await db.CampaignRecipients
+            .FirstOrDefaultAsync(cr => cr.ExternalId == evt.ExternalId, ct);
+
+        if (campaignRecipient is not null)
+        {
+            if (deliveryStatus == DeliveryStatus.DELIVERED && campaignRecipient.Status is "SENT")
+            {
+                campaignRecipient.Status = "DELIVERED";
+                campaignRecipient.DeliveredAt = now;
+            }
+            else if (deliveryStatus == DeliveryStatus.READ && campaignRecipient.Status is "SENT" or "DELIVERED")
+            {
+                campaignRecipient.Status = "READ";
+                campaignRecipient.ReadAt = now;
+                if (campaignRecipient.DeliveredAt is null)
+                    campaignRecipient.DeliveredAt = now;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        // Publish SignalR update for real-time UI
+        try
+        {
+            var redisDb = redis.GetDatabase();
+            var signalRPayload = JsonSerializer.Serialize(new
+            {
+                Event = "MessageStatusUpdate",
+                InboxId = message.Conversation.InboxId.ToString(),
+                ConversationId = message.ConversationId.ToString(),
+                Payload = new
+                {
+                    messageId = message.Id.ToString(),
+                    deliveryStatus = deliveryStatus.Value.ToString(),
+                }
+            });
+            await redisDb.PublishAsync(RedisChannel.Literal("signalr:events"), signalRPayload);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to publish status update SignalR event for message {MessageId}", message.Id);
+        }
+
+        logger.LogDebug("Updated delivery status for message {MessageId}: {Status}", message.Id, deliveryStatus);
+    }
+
+    // ── Send-message handling (messages sent from phone) ──────────────────
+
+    private async Task HandleSendMessageWebhookAsync(EvolutionMessageWebhookReceivedEvent evt, CancellationToken ct)
+    {
+        var parsed = ParseIncomingPayload(evt.RawPayload);
+
+        // send-message events are always outbound (fromMe = true), that's the point
+        var phone = parsed.Phone;
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            logger.LogDebug("SendMessage webhook has no phone, ignoring. ExternalId={ExternalId}", evt.ExternalId);
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NocDbContext>();
+
+        // Check if this message was already recorded (e.g., sent from NOC)
+        var alreadyExists = await db.Messages.AnyAsync(m => m.ExternalId == evt.ExternalId, ct);
+        if (alreadyExists)
+        {
+            logger.LogDebug("SendMessage with ExternalId={ExternalId} already exists, skipping", evt.ExternalId);
+            return;
+        }
+
+        // Find contact by phone
+        var contact = await db.Contacts.FirstOrDefaultAsync(c => c.Phone == phone, ct);
+        if (contact is null)
+        {
+            // Create contact for messages sent from phone to unknown numbers
+            contact = new Contact
+            {
+                Id = Guid.CreateVersion7(),
+                Phone = phone,
+                Name = parsed.ContactName,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Contacts.Add(contact);
+        }
+
+        // Find existing conversation for this contact + inbox
+        var conversation = await db.Conversations
+            .Where(c => c.InboxId == evt.InboxId && c.ContactId == contact.Id
+                && c.Status != ConversationStatus.RESOLVED && c.Status != ConversationStatus.ARCHIVED)
+            .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (conversation is null)
+        {
+            // Try reopening a resolved one
+            conversation = await db.Conversations
+                .Where(c => c.InboxId == evt.InboxId && c.ContactId == contact.Id
+                    && c.Status == ConversationStatus.RESOLVED)
+                .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            if (conversation is not null)
+            {
+                conversation.Status = ConversationStatus.OPEN;
+                conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            else
+            {
+                conversation = CreateConversation(evt.InboxId, contact.Id, DateTimeOffset.UtcNow);
+                db.Conversations.Add(conversation);
+            }
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var messageType = ParseIncomingMessageType(parsed);
+        var messageContent = !string.IsNullOrWhiteSpace(parsed.MediaCaption) ? parsed.MediaCaption : parsed.Content;
+
+        var message = new Message
+        {
+            Id = Guid.CreateVersion7(),
+            ConversationId = conversation.Id,
+            ExternalId = evt.ExternalId,
+            Direction = MessageDirection.OUTBOUND,
+            Type = messageType,
+            Content = messageContent,
+            MediaMimeType = parsed.MediaMimeType,
+            MediaFilename = parsed.MediaFileName,
+            DeliveryStatus = DeliveryStatus.SENT,
+            ProviderMetadata = evt.RawPayload,
+            CreatedAt = now,
+        };
+        db.Messages.Add(message);
+
+        var preview = !string.IsNullOrWhiteSpace(messageContent)
+            ? BuildPreview(messageContent)
+            : BuildMediaPreview(messageType);
+
+        conversation.LastMessageAt = now;
+        conversation.LastMessagePreview = preview;
+        conversation.LastMessageDirection = MessageDirection.OUTBOUND.ToString();
+        conversation.LastOutboundAt = now;
+        conversation.UpdatedAt = now;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsExternalIdUniqueViolation(ex))
+        {
+            logger.LogDebug("Duplicate ExternalId={ExternalId} for send-message, ignoring", evt.ExternalId);
+            return;
+        }
+
+        await PublishSignalREventAsync(evt.InboxId, conversation.Id, message);
+        logger.LogInformation("Recorded phone-sent message {MessageId} for conversation {ConversationId}",
+            message.Id, conversation.Id);
     }
 
     private sealed record IncomingPayload(
