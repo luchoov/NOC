@@ -216,6 +216,9 @@ public class Worker(
                 recipient.SentAt = DateTimeOffset.UtcNow;
                 recipient.ExternalId = externalId;
                 sentThisBatch++;
+
+                // Record message in conversation so it appears in the chat UI
+                await RecordOutboundMessageAsync(db, campaign, recipient, messageText, externalId);
             }
             catch (Exception ex)
             {
@@ -266,6 +269,113 @@ public class Worker(
         campaign.DeliveredCount = stats.Where(s => s.Status is "DELIVERED" or "READ").Sum(s => s.Count);
         campaign.ReadCount = stats.Where(s => s.Status == "READ").Sum(s => s.Count);
         campaign.FailedCount = stats.Where(s => s.Status == "FAILED").Sum(s => s.Count);
+    }
+
+    private async Task RecordOutboundMessageAsync(
+        NocDbContext db, Campaign campaign, CampaignRecipient recipient,
+        string messageText, string? externalId)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+
+            // Find or create conversation for this contact + inbox
+            var conversation = await db.Conversations
+                .Where(c => c.InboxId == campaign.InboxId && c.ContactId == recipient.ContactId
+                    && c.Status != ConversationStatus.RESOLVED && c.Status != ConversationStatus.ARCHIVED)
+                .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (conversation is null)
+            {
+                // Try to reopen a resolved conversation
+                conversation = await db.Conversations
+                    .Where(c => c.InboxId == campaign.InboxId && c.ContactId == recipient.ContactId
+                        && c.Status == ConversationStatus.RESOLVED)
+                    .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (conversation is not null)
+                {
+                    conversation.Status = ConversationStatus.OPEN;
+                    conversation.UpdatedAt = now;
+                }
+                else
+                {
+                    conversation = new Conversation
+                    {
+                        Id = Guid.CreateVersion7(),
+                        InboxId = campaign.InboxId,
+                        ContactId = recipient.ContactId,
+                        Status = ConversationStatus.OPEN,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                    };
+                    db.Conversations.Add(conversation);
+                }
+            }
+
+            var preview = messageText.Length > 100 ? messageText[..100] + "..." : messageText;
+
+            var message = new Message
+            {
+                Id = Guid.CreateVersion7(),
+                ConversationId = conversation.Id,
+                ExternalId = externalId,
+                Direction = MessageDirection.OUTBOUND,
+                Type = MessageType.TEXT,
+                Content = messageText,
+                DeliveryStatus = DeliveryStatus.SENT,
+                ProviderMetadata = "{}",
+                CreatedAt = now,
+            };
+            db.Messages.Add(message);
+
+            conversation.LastMessageAt = now;
+            conversation.LastMessagePreview = preview;
+            conversation.LastMessageDirection = MessageDirection.OUTBOUND.ToString();
+            conversation.LastOutboundAt = now;
+            conversation.UpdatedAt = now;
+
+            await db.SaveChangesAsync();
+
+            // Publish to SignalR so the chat UI updates in real time
+            await PublishMessageToSignalRAsync(campaign.InboxId, conversation.Id, message);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Campaign {CampaignId}: failed to record outbound message for {ContactId}",
+                campaign.Id, recipient.ContactId);
+        }
+    }
+
+    private async Task PublishMessageToSignalRAsync(Guid inboxId, Guid conversationId, Message message)
+    {
+        try
+        {
+            var redisDb = redis.GetDatabase();
+            var payload = JsonSerializer.Serialize(new
+            {
+                Event = "MessageReceived",
+                InboxId = inboxId.ToString(),
+                ConversationId = conversationId.ToString(),
+                Payload = new
+                {
+                    id = message.Id.ToString(),
+                    conversationId = conversationId.ToString(),
+                    direction = message.Direction.ToString(),
+                    type = message.Type.ToString(),
+                    content = message.Content,
+                    deliveryStatus = message.DeliveryStatus?.ToString(),
+                    createdAt = message.CreatedAt,
+                }
+            });
+            await redisDb.PublishAsync(RedisChannel.Literal("signalr:events"), payload);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to publish campaign message via Redis");
+        }
     }
 
     private static string ResolveTemplateVariables(string template, CampaignRecipient recipient)
