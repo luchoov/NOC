@@ -28,7 +28,7 @@ public class SignalRBridge(
             try
             {
                 if (message.IsNullOrEmpty) return;
-                var evt = JsonSerializer.Deserialize<SignalREvent>((string)message!);
+                var evt = JsonSerializer.Deserialize<SignalREvent>((string)message!, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (evt is null) return;
 
                 switch (evt.Event)

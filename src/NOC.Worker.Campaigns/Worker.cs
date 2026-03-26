@@ -300,7 +300,7 @@ public class Worker(
                     campaign.ReadCount,
                     campaign.FailedCount,
                 }
-            });
+            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
             await redisDb.PublishAsync(RedisChannel.Literal("signalr:events"), payload);
         }
         catch (Exception ex)
