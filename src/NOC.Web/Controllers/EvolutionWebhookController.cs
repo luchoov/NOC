@@ -36,13 +36,20 @@ public class EvolutionWebhookController(
     [HttpPost("{eventSlug}")]
     public async Task<IActionResult> Receive(Guid inboxId, string? eventSlug, [FromBody] JsonElement payload)
     {
+        // Log ALL incoming webhooks before auth check for debugging
+        logger.LogWarning("Evolution webhook HIT: slug={Slug}, inbox={InboxId}, hasQuery={HasQuery}, hasHeader={HasHeader}, payloadEvent={PayloadEvent}",
+            eventSlug, inboxId,
+            Request.Query.ContainsKey(WebhookTokenQueryKey),
+            Request.Headers.ContainsKey(WebhookTokenHeader),
+            payload.TryGetProperty("event", out var evProp) ? evProp.GetString() : "none");
+
         var authError = EnsureWebhookAuthorized(inboxId);
         if (authError is not null)
             return authError;
 
         var normalizedEvent = NormalizeEventSlug(eventSlug, payload);
 
-        logger.LogInformation("Evolution webhook received: event={Event}, slug={Slug}, inbox={InboxId}",
+        logger.LogWarning("Evolution webhook AUTHORIZED: event={Event}, slug={Slug}, inbox={InboxId}",
             normalizedEvent, eventSlug, inboxId);
 
         return normalizedEvent switch
