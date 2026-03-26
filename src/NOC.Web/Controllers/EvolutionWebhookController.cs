@@ -42,6 +42,9 @@ public class EvolutionWebhookController(
 
         var normalizedEvent = NormalizeEventSlug(eventSlug, payload);
 
+        logger.LogInformation("Evolution webhook received: event={Event}, slug={Slug}, inbox={InboxId}",
+            normalizedEvent, eventSlug, inboxId);
+
         return normalizedEvent switch
         {
             "messages-upsert" or "messages-set" => await ReceiveMessageInternal(inboxId, payload),
