@@ -141,9 +141,10 @@ public class Worker(
             }
         }
 
-        // Claim a batch
+        // Claim a batch (include Contact for template variables)
         var leaseExpiry = DateTimeOffset.UtcNow.AddMinutes(_leaseMinutes);
         var claimed = await db.CampaignRecipients
+            .Include(r => r.Contact)
             .Where(r => r.CampaignId == campaign.Id && r.Status == "QUEUED")
             .OrderBy(r => r.Id)
             .Take(_batchSize)
@@ -199,10 +200,13 @@ public class Worker(
 
             try
             {
+                // Resolve template variables
+                var messageText = ResolveTemplateVariables(campaign.MessageTemplate, recipient);
+
                 var response = await evolutionApiClient.SendMessageAsync(instanceName, new EvolutionSendMessageRequest
                 {
                     Number = recipient.Phone,
-                    Text = campaign.MessageTemplate,
+                    Text = messageText,
                 }, cancellationToken: ct);
 
                 // Extract external ID from response
@@ -262,6 +266,20 @@ public class Worker(
         campaign.DeliveredCount = stats.Where(s => s.Status is "DELIVERED" or "READ").Sum(s => s.Count);
         campaign.ReadCount = stats.Where(s => s.Status == "READ").Sum(s => s.Count);
         campaign.FailedCount = stats.Where(s => s.Status == "FAILED").Sum(s => s.Count);
+    }
+
+    private static string ResolveTemplateVariables(string template, CampaignRecipient recipient)
+    {
+        var contact = recipient.Contact;
+        if (contact is null) return template;
+
+        return template
+            .Replace("{{nombre}}", contact.Name ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{{name}}", contact.Name ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{{telefono}}", recipient.Phone, StringComparison.OrdinalIgnoreCase)
+            .Replace("{{phone}}", recipient.Phone, StringComparison.OrdinalIgnoreCase)
+            .Replace("{{email}}", contact.Email ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{{localidad}}", contact.Locality ?? "", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task PublishProgressAsync(Campaign campaign)

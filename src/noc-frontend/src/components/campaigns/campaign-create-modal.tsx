@@ -218,7 +218,7 @@ export function CampaignCreateModal({ open, onClose, onSaved }: CampaignCreateMo
                     <textarea
                       value={messageTemplate}
                       onChange={(e) => setMessageTemplate(e.target.value)}
-                      placeholder="Hola! Te escribimos para..."
+                      placeholder="Hola {{nombre}}! Te escribimos para..."
                       rows={5}
                       className={inputClass + ' resize-none'}
                     />
@@ -232,6 +232,19 @@ export function CampaignCreateModal({ open, onClose, onSaved }: CampaignCreateMo
                           Excede el limite de WhatsApp
                         </span>
                       )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-zinc-600">Variables:</span>
+                      {['{{nombre}}', '{{telefono}}', '{{email}}', '{{localidad}}'].map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setMessageTemplate((prev) => prev + v)}
+                          className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
+                        >
+                          {v}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
