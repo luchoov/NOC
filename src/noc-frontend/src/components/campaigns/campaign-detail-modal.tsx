@@ -92,6 +92,7 @@ export function CampaignDetailModal({ campaign, onClose, onUpdated }: CampaignDe
   }
 
   async function handleDuplicate() {
+    if (!current) return;
     setActing(true);
     try {
       const dup = await duplicateCampaign(current.id);
