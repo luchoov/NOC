@@ -155,7 +155,7 @@ export function ChatView({ conversation, onToggleContactPanel, onConversationUpd
       setMessages((prev) =>
         prev.map((m) =>
           m.id === payload.messageId
-            ? { ...m, deliveryStatus: payload.deliveryStatus }
+            ? { ...m, deliveryStatus: payload.deliveryStatus as MessageResponse['deliveryStatus'] }
             : m,
         ),
       );
