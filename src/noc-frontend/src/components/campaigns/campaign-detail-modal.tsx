@@ -4,10 +4,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Play, Pause, Square, Copy, X, Send, CheckCheck, Eye, AlertTriangle, Users, Clock } from 'lucide-react';
+import { Loader2, Play, Pause, Square, Copy, X, Send, CheckCheck, Eye, AlertTriangle, Users, Clock, Pencil, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CampaignResponse, CampaignRecipientResponse } from '@/types/api';
-import { getCampaign, startCampaign, pauseCampaign, resumeCampaign, cancelCampaign, duplicateCampaign, listCampaignRecipients } from '@/lib/api/campaigns';
+import { getCampaign, startCampaign, pauseCampaign, resumeCampaign, cancelCampaign, duplicateCampaign, updateCampaign, listCampaignRecipients } from '@/lib/api/campaigns';
 import { CampaignStatusBadge } from './campaign-status-badge';
 import { timeAgo, formatFull } from '@/lib/utils/format-date';
 
